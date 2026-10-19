@@ -17,6 +17,8 @@
   var FEEDBACK_INDEX_NAME = 'feedback_index.json';
   var FEEDBACK_SUMMARY_NAME = '독자_피드백_정리.md';
   var CANDIDATES_NAME = 'novel_candidates.json';
+  var UNAPPLIED_NAME = '미반영_피드백.md';      // 마지막 반영완료 이후 새로 남기거나 고친 피드백만 (에이전트가 먼저 읽는 짧은 파일)
+  var APPLIED_LOG_NAME = '반영_기록.md';        // 에이전트가 '반영완료:' 줄을 덧붙이는 파일. 앱은 읽기만 하고 절대 쓰지 않는다.
   var STATE_NAME = 'reader_state.json';          // 마지막으로 읽은 화 (휴대폰·PC 공유, PropertiesService 대신)
   var DEFAULT_HIDDEN_FOLDERS = ['00_설정과_대화'];
   var BLOCK_START = '<!-- 재독피드백:시작 (리더 앱이 자동 관리하는 구역) -->';
@@ -439,6 +441,8 @@
       '',
       '## 생성 에이전트(ChatGPT·Grok) 참고 방법',
       '',
+      '- **피드백 반영은 먼저 같은 폴더의 `' + UNAPPLIED_NAME + '`만 읽는다.** 마지막 반영 이후 새로 남기거나 고친 피드백만 들어 있어 짧다. 이 전체 모음은 지난 피드백을 다시 찾아볼 때만 연다.',
+      '- 반영을 마치면 `' + APPLIED_LOG_NAME + '` 맨 아래에 `반영완료:` 줄을 덧붙인다(형식은 그 파일 머리말 참고).',
       '- 사용자가 지난 글을 다시 읽으며 뒤늦게 남긴 평가다. 당시 대화의 반응보다 이 재독 피드백이 더 최신 판단이다.',
       '- `⭐ 최고`와 `👍 좋아요`의 **좋았던 점**은 살리고, 모든 편의 **아쉬웠던 점**과 `👎 별로` 편의 패턴은 반복하지 않는다.',
       '- 같은 내용이 각 원본 파일 맨 끝 `## 재독 피드백`에도 들어 있다.',
@@ -466,7 +470,88 @@
     }
     return out.join('\n');
   }
-  function writeSummary_(idx) { return writeFile_(FEEDBACK_SUMMARY_NAME, buildSummary_(idx)); }
+  function writeSummary_(idx) {
+    return writeFile_(FEEDBACK_SUMMARY_NAME, buildSummary_(idx)).then(function () { return writeUnapplied_(idx); });
+  }
+
+  // ---------- 미반영 피드백 (반영_기록.md는 읽기만) ----------
+
+  /** 'yyyy-MM-dd HH:mm'(한국 시각) → 분 단위 시각(ms). 형식이 아니면 null */
+  function kstMs_(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || '').trim());
+    if (!m) return null;
+    return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - 9 * 3600 * 1000;
+  }
+  /**
+   * 반영_기록.md에서 가장 늦은 '반영완료:' 시각을 찾는다. 줄 맨 앞(목록 기호 '-'/'*' 허용)에 있어야 한다.
+   * 시각 형식: 2026-10-20T09:30+09:00 / 2026-10-20 09:30 (시간대 없으면 한국 시각) / ...Z. 초는 버리고 분 단위로 본다.
+   */
+  function latestAppliedMark_(text) {
+    var re = /^[ \t]*(?:[-*][ \t]+)?반영완료[ \t]*:[ \t]*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?[ \t]*(Z|[+-]\d{2}:?\d{2})?/gm;
+    var best = null, m;
+    while ((m = re.exec(String(text || '').replace(/\r/g, '')))) {
+      var off = 9 * 60;
+      if (m[6] === 'Z') off = 0;
+      else if (m[6]) { var z = m[6].replace(':', ''); off = (z[0] === '-' ? -1 : 1) * (parseInt(z.slice(1, 3), 10) * 60 + parseInt(z.slice(3, 5), 10)); }
+      var ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - off * 60000;
+      if (best === null || ms > best) best = ms;
+    }
+    return best;
+  }
+  /**
+   * 미반영 피드백 파일 내용. 기록 시각이 마지막 반영완료 시각과 같은 분이거나 그 뒤인 항목만 넣는다(같은 분은 놓치지 않게 포함).
+   * 기록 시각이 없는 항목은 반영 기록이 하나도 없을 때만 넣는다.
+   */
+  function buildUnapplied_(idx, logText) {
+    var mark = latestAppliedMark_(logText);
+    var bySrc = function (a, b) { return a.num - b.num || srcOrder_(a.src) - srcOrder_(b.src); };
+    var author = function (x) { return x.src && x.src !== 'old' ? (SOURCE_LABEL[x.src] || x.src) : SOURCE_LABEL.old; };
+    var items = Object.keys(idx.items).map(function (k) { return idx.items[k]; }).filter(function (x) {
+      if (x.kind === 'notnovel' || !(x.rating || x.good || x.bad)) return false;
+      var t = kstMs_(x.updated);
+      if (mark === null) return true;
+      return t !== null && t >= mark;
+    }).sort(bySrc);
+    var out = [
+      '# 미반영 재독 피드백',
+      '',
+      '> 에피소드 리더 앱이 자동으로 만드는 파일이다. 직접 수정하지 말 것(피드백을 저장할 때마다 덮어써짐).',
+      '> 마지막 갱신: ' + stamp_() + ' · 미반영 피드백 ' + items.length + '편',
+      '> 기준: ' + (mark === null ? '`' + APPLIED_LOG_NAME + '`에 반영완료 기록 없음 → 지금까지의 피드백 전부' : '마지막 반영완료 ' + stamp_(new Date(mark)) + ' (한국 시각) 이후(같은 분 포함)에 남기거나 고친 피드백'),
+      '',
+      '## 생성 에이전트 사용 방법',
+      '',
+      '- 마지막 반영 이후 새로 남기거나 고친 피드백만 모은 파일이다. 피드백 반영은 이 파일만 읽으면 된다(전체 모음 `' + FEEDBACK_SUMMARY_NAME + '` 파일은 필요할 때만 연다).',
+      '- 반영을 마치면 같은 폴더 `' + APPLIED_LOG_NAME + '` 맨 아래에 한 줄을 덧붙인다. 예: `반영완료: 2026-10-20T09:30+09:00 | 작가: Grok | 반영 편: 771, 772`',
+      '- 앱은 반영 기록을 읽기만 하고, 다음에 피드백을 저장할 때 이 파일을 다시 만든다. 그래서 이 파일의 기준 시각보다 늦은 `반영완료:` 줄이 반영 기록에 이미 있으면, 그 시각 전에 기록된 항목은 이미 반영된 것이니 건너뛴다.',
+      '- 같은 내용이 각 원본 파일 맨 끝 `## 재독 피드백` 구역에도 있다. 그 구역(재독피드백 표시 사이)은 앱이 관리하므로 고치지 않는다.',
+      ''
+    ];
+    if (!items.length) { out.push('(미반영 피드백 없음)', ''); return out.join('\n'); }
+    out.push('## 미반영 피드백 (' + items.length + '편)', '');
+    items.forEach(function (x) {
+      out.push('### ' + pad3_(x.num) + '. ' + x.title + (x.src && x.src !== 'old' ? ' (' + author(x) + ')' : ''), '');
+      out.push('- 작가: ' + author(x));
+      out.push('- 평가: ' + (RATING_LABEL[x.rating || ''] || RATING_LABEL['']));
+      out.push('- 분류: ' + (x.cats && x.cats.length ? x.cats.join(', ') : '-'));
+      out.push('- 드라이브 파일 ID: ' + ((x.ids || []).join(', ') || '-'));
+      out.push('- 기록: ' + (x.updated || '(시각 없음)'));
+      out.push('- 좋았던 점: ' + (x.good ? oneBlock_(x.good) : '(없음)'));
+      out.push('- 아쉬웠던 점: ' + (x.bad ? oneBlock_(x.bad) : '(없음)'));
+      if (x.memo) out.push('- 메모: ' + oneBlock_(String(x.memo)));
+      out.push('');
+    });
+    return out.join('\n');
+  }
+  function readAppliedLog_() {
+    return findFile_(APPLIED_LOG_NAME).then(function (f) {
+      if (!f) return '';
+      return D.download(f.id).then(function (t) { return t || ''; });
+    });
+  }
+  function writeUnapplied_(idx) {
+    return readAppliedLog_().then(function (log) { return writeFile_(UNAPPLIED_NAME, buildUnapplied_(idx, log)); });
+  }
 
   function oneBlock_(t) {
     // 여러 줄 메모를 목록 안에서 깨지지 않게 들여쓴다.
@@ -508,7 +593,7 @@
     listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent,
     SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_,
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,
-    stamp: stamp_, buildBlock: buildBlock_, replaceBlock: replaceBlock_, buildSummary: buildSummary_,
+    stamp: stamp_, buildBlock: buildBlock_, replaceBlock: replaceBlock_, buildSummary: buildSummary_, buildUnapplied: buildUnapplied_, latestAppliedMark: latestAppliedMark_,
     hasStateFile: function () { return !!stateFile; },
     onFileWritten: null
   };
