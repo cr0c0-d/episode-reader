@@ -24,7 +24,7 @@
   function prefersDark() { return !!(global.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches); }
   function defaults() {
     return { font: 'system', fs: 18, lh: 1.85, ps: 1.05, mx: 16, align: 'left', indent: false,
-      theme: prefersDark() ? 'dark' : 'light', mode: 'scroll', wake: false, spread: 'auto', hideBar: true };
+      theme: prefersDark() ? 'dark' : 'light', mode: 'scroll', wake: false, spread: 'auto', hideBar: true, source: 'all' };
   }
   /** 넓은 화면(폴드 안쪽 화면 등): 양쪽 보기 '자동'과 상태표시줄 숨기기가 같은 기준을 쓴다 */
   function isWide() {
@@ -131,6 +131,7 @@
     if (!FONTS[s.font] && !customMetaById(s.font)) s.font = 'system';
     if (['auto', 'on', 'off'].indexOf(s.spread) === -1) s.spread = 'auto';
     if (typeof s.hideBar !== 'boolean') s.hideBar = true;
+    if (['all', 'old', 'gpt', 'grok'].indexOf(s.source) === -1) s.source = 'all';
     if (!THEME_COLOR[s.theme]) s.theme = 'light';
     if (s.mode !== 'page') s.mode = 'scroll';
     Object.keys(LIMITS).forEach(function (k) { s[k] = clamp(k, Number(s[k])); });
@@ -204,7 +205,7 @@
   function get() { return s; }
   function reset() {
     var d = defaults();
-    d.mode = s.mode; d.wake = s.wake; d.hideBar = s.hideBar;   // 넘김 방식·화면 꺼짐 방지·상태표시줄 숨기기는 그대로 둔다
+    d.mode = s.mode; d.wake = s.wake; d.hideBar = s.hideBar; d.source = s.source;   // 넘김 방식·화면 꺼짐 방지·상태표시줄 숨기기는 그대로 둔다
     set(d);
   }
 

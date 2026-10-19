@@ -186,6 +186,11 @@
     return request(API + '/files/' + encodeURIComponent(id) + '?alt=media').then(function (r) { return r.arrayBuffer(); })
       .then(function (buf) { return decoder.decode(buf); });
   }
+  /** 구글 문서 등을 다른 형식으로 내보내 읽는다 (읽기 전용 GET) */
+  function exportText(id, mime) {
+    return request(API + '/files/' + encodeURIComponent(id) + '/export?' + qs({ mimeType: mime || 'text/plain' })).then(function (r) { return r.arrayBuffer(); })
+      .then(function (buf) { return decoder.decode(buf); });
+  }
   /** 내용만 바꾼다(uploadType=media). 문자열 본문은 UTF-8로 전송된다. */
   function update(id, text, mime, o) {
     return json(request(UPLOAD + '/files/' + encodeURIComponent(id) + '?' + qs({ uploadType: 'media', fields: 'id,modifiedTime' }), {
@@ -222,6 +227,6 @@
     FOLDER_MIME: FOLDER_MIME,
     on: on, configured: configured, everConnected: function () { return ever; }, email: function () { return email; },
     hasValidToken: hasValidToken, requestToken: requestToken, gestureRefresh: gestureRefresh, loadGis: loadGis,
-    list: list, getMeta: getMeta, download: download, update: update, create: create, createFolder: createFolder, about: about
+    list: list, getMeta: getMeta, download: download, exportText: exportText, update: update, create: create, createFolder: createFolder, about: about
   };
 })(window);

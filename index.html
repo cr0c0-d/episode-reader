@@ -45,6 +45,7 @@
     <p id="connectMsg" class="cmsg"></p>
   </div>
   <div id="resume" class="resume"><small>이어 읽기</small><span id="resumeTitle"></span></div>
+  <div id="srcTabs" class="srctabs" role="tablist" aria-label="만든 곳" hidden></div>
   <input id="search" class="search" type="search" placeholder="번호나 제목으로 찾기">
   <div id="chips" class="chips"></div>
   <div class="countrow"><div id="count" class="count"></div><button id="selBtn">여러 편 선택</button></div>
@@ -52,6 +53,16 @@
   <div id="groups"></div>
   <ul id="list" class="list"></ul>
   <div id="homeStatus" class="status">드라이브에서 목록을 불러오는 중이에요…</div>
+  <details id="arcEntry" class="arcentry" hidden><summary><span>보관 폴더</span><small>목록에서 빠진 폴더 · 읽기 전용</small></summary>
+    <ul id="arcRoots" class="arclist"></ul></details>
+</div>
+
+<div id="archive" class="wrap" style="display:none">
+  <nav id="arcCrumbs" class="crumbs" aria-label="위치"></nav>
+  <div class="countrow"><div id="arcCount" class="count"></div><button id="arcRefresh">↻ 새로 고침</button></div>
+  <p class="arcro">읽기 전용이에요. 피드백이나 읽은 위치를 남기지 않아요.</p>
+  <ul id="arcList" class="arclist"></ul>
+  <div id="arcStatus" class="status"></div>
 </div>
 
 <div id="selbar"><span class="sc" id="selCount">0편 선택</span>

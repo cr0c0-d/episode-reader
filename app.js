@@ -18,6 +18,13 @@
   var VIRTUAL = [['@best', '⭐ 최고'], ['@unrated', '아직 평가 안 함'], ['@dislike', '👎 별로'],
     ['@candidate', '소설 아님 후보'], ['@notnovel', '소설 아님']];
   var candidates = {}, keepNovel = {}, hiddenFolders = [];
+  var legacyFb = {};        // 출처 키 -> 예전 번호 키 (예전 색인 항목을 이어받은 경우)
+  var archiveRoots = [];    // 목록에서 빠진 폴더들 (보관 폴더)
+  var numCount = {};        // 번호 -> 그 번호의 글 수 (출처가 다르면 같은 번호가 여럿)
+  // 출처(생성기) 구분: 기존(~685) / ChatGPT / 그록봇
+  var SOURCES = [['all', '전체'], ['old', '기존 (~685)'], ['gpt', 'ChatGPT'], ['grok', '그록봇']];
+  var SRC_BADGE = { gpt: 'GPT', grok: '그록' };
+  var SRC_LABEL = { old: '기존', gpt: 'ChatGPT', grok: '그록봇' };
   var BS = '<!-- 재독피드백:시작', BE = '<!-- 재독피드백:끝 -->';
   var FEEDBACK_MAX = Infinity; // 모든 편에 재독 피드백 칸 표시
   var LS = window.localStorage;
@@ -68,28 +75,44 @@
 
   marked.setOptions({ gfm: true, breaks: true });
 
-  function fbOf(i) { return feedback[episodes[i].num] || {}; }
+  function srcOf(ep) { return ep.src || 'old'; }
+  function keyOf(ep) { return ep.key || String(ep.num); }
+  var sourcesPresent = false;
+  function curSrc() { return sourcesPresent ? (Settings.get().source || 'all') : 'all'; }
+  function srcOk(i) { var c = curSrc(); return c === 'all' || srcOf(episodes[i]) === c; }
+  function catSrcOk(c) { var cs = curSrc(); return cs === 'all' || (c.src || 'old') === cs; }
+  function hasSources() { return sourcesPresent; }
+  /** 번호로 적힌 자료(후보·소설 맞음): 기존 글은 번호, 출처별 글은 '686-grok' 키, 번호가 겹치지 않으면 번호도 인정 */
+  function byNumOrKey(map, ep) {
+    if (!ep.src) return map[ep.num];
+    if (map[ep.key] != null) return map[ep.key];
+    return numCount[ep.num] === 1 ? map[ep.num] : undefined;
+  }
+  function candOf(ep) { return byNumOrKey(candidates, ep); }
+  function fbOf(i) { return feedback[keyOf(episodes[i])] || {}; }
   function rating(i) { return fbOf(i).rating || ''; }
   function kindOf(i) { return fbOf(i).kind || ''; }
+  /** 설정과 대화 폴더: 앞 번호를 뗀 이름으로, 어느 깊이에 있든 (00_설정과_대화, 그록봇/05_설정과_대화 …) */
   function inHiddenFolder(i) {
+    var bases = hiddenFolders.map(Core.baseName);
     return episodes[i].cats.some(function (k) {
-      var last = k.split('/').pop();
-      return hiddenFolders.indexOf(last) !== -1;
+      return k.split('/').some(function (seg) { return bases.indexOf(Core.baseName(seg)) !== -1; });
     });
   }
-  function defaultNotNovel(i) { return inHiddenFolder(i) && !keepNovel[episodes[i].num]; }
+  function defaultNotNovel(i) { return inHiddenFolder(i) && !byNumOrKey(keepNovel, episodes[i]); }
   function isNotNovel(i) {
     var k = kindOf(i);
     if (k === 'notnovel') return true;
     if (k === 'novel') return false;
     return defaultNotNovel(i);
   }
-  function isCandidate(i) { return !kindOf(i) && !isNotNovel(i) && !!candidates[episodes[i].num]; }
+  function isCandidate(i) { return !kindOf(i) && !isNotNovel(i) && !!candOf(episodes[i]); }
   function hasReview(i) { var f = fbOf(i); return !!(f.rating || f.good || f.bad); }
   function isHidden(i) { return isNotNovel(i) || rating(i) === 'dislike'; }
   function inCat(key) {
     var out = [];
     episodes.forEach(function (ep, i) {
+      if (key.charAt(0) === '@' && !srcOk(i)) return;   // 가상 분류는 고른 출처 안에서만 (실제 분류는 출처가 하나)
       var ok, nn = isNotNovel(i);
       if (key === '@best') ok = !nn && rating(i) === 'best';
       else if (key === '@unrated') ok = !nn && ep.num <= FEEDBACK_MAX && !hasReview(i);
@@ -102,7 +125,12 @@
     return out;
   }
   function everyIdx() { return episodes.map(function (_, i) { return i; }); }
-  function allIdx() { return everyIdx().filter(function (i) { return !isHidden(i); }); }
+  function srcIdx() { return everyIdx().filter(srcOk); }
+  function allIdx() { return srcIdx().filter(function (i) { return !isHidden(i); }); }
+  function allIdxAnySrc() { return everyIdx().filter(function (i) { return !isHidden(i); }); }
+  function srcBadge(src) {
+    var b = document.createElement('span'); b.className = 'srcb srcb-' + src; b.textContent = SRC_BADGE[src]; return b;
+  }
   var MARK = { best: '⭐', like: '👍', dislike: '👎' };
 
   // ---------- 목록 ----------
@@ -115,12 +143,13 @@
     if (selected[i]) { li.classList.add('sel'); li.querySelector('.ck').textContent = '✓'; }
     li.querySelector('.n').textContent = ep.num;
     li.querySelector('.t').textContent = ep.title;
+    if (ep.src && curSrc() === 'all') li.querySelector('.n').after(srcBadge(ep.src));
     var r = rating(i);
     if (r) { var mk = document.createElement('span'); mk.className = 'mark'; mk.textContent = MARK[r]; li.querySelector('.t').appendChild(mk); }
     var bd = isNotNovel(i) ? '소설 아님' : isCandidate(i) ? '후보' : '';
     if (bd) { var b = document.createElement('span'); b.className = 'badge'; b.textContent = bd; li.querySelector('.t').appendChild(b); }
-    if (cat === '@candidate' && candidates[ep.num]) {
-      var why = document.createElement('span'); why.className = 'c'; why.textContent = '자동 판단: ' + candidates[ep.num];
+    if (cat === '@candidate' && candOf(ep)) {
+      var why = document.createElement('span'); why.className = 'c'; why.textContent = '자동 판단: ' + candOf(ep);
       li.querySelector('.t').appendChild(why);
     }
     if (cat === null) {
@@ -143,15 +172,39 @@
     return li;
   }
 
+  function renderSources() {
+    var box = $('srcTabs'); box.innerHTML = '';
+    box.hidden = !hasSources();
+    if (box.hidden) return;
+    var cur = curSrc();
+    SOURCES.forEach(function (o) {
+      var b = document.createElement('button');
+      b.className = 'stab' + (cur === o[0] ? ' on' : '');
+      b.setAttribute('data-src', o[0]); b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', cur === o[0] ? 'true' : 'false');
+      var n = episodes.filter(function (e, i) { return (o[0] === 'all' || srcOf(e) === o[0]) && !isHidden(i); }).length;
+      b.innerHTML = '<span class="sl2"></span><span class="sn"></span>';
+      b.firstChild.textContent = o[1]; b.lastChild.textContent = n;
+      b.onclick = function () { setSource(o[0]); };
+      box.appendChild(b);
+    });
+  }
+  function setSource(v) {
+    safeSet('source', v);
+    Settings.set({ source: v });   // 보기 설정(localStorage viewSettings)에도 저장
+    renderHome(); window.scrollTo(0, 0);
+  }
+  function catLabel(c) { return c.name; }
   function renderChips() {
     var box = $('chips'); box.innerHTML = '';
+    var showBadge = curSrc() === 'all';
     var opts = [{ v: 'groups', label: '분류별' }, { v: 'all', label: '전체 번호순' }]
       .concat(VIRTUAL.map(function (v) { return { v: v[0], label: v[1] + ' ' + inCat(v[0]).length }; }))
-      .concat(categories.map(function (c) { return { v: c.key, label: c.name }; }));
+      .concat(categories.filter(catSrcOk).map(function (c) { return { v: c.key, label: catLabel(c), src: showBadge && c.src }; }));
     opts.forEach(function (o) {
       var b = document.createElement('button');
       b.className = 'chip' + (view === o.v ? ' on' : '');
       b.textContent = o.label;
+      if (o.src) { b.appendChild(document.createTextNode(' ')); b.appendChild(srcBadge(o.src)); }
       b.onclick = function () { view = o.v; safeSet('view', view); renderHome(); window.scrollTo(0, 0); };
       box.appendChild(b);
     });
@@ -162,16 +215,21 @@
     var ul = $('list'), groups = $('groups');
     ul.innerHTML = ''; groups.innerHTML = '';
     $('chips').style.display = q ? 'none' : 'flex';
+    $('arcEntry').hidden = !!q || !archiveRoots.length;
+    if ($('arcEntry').open && !arcRootsDrawn && archiveRoots.length) drawArcRoots();
+    renderSources();
     renderChips();
+    var sp = curSrc() === 'all' ? '' : SRC_LABEL[curSrc()] + ' · ';
 
     if (q) {
-      var hits = everyIdx().filter(function (i) {
+      var pool = srcIdx();   // 검색도 고른 출처 안에서
+      var hits = pool.filter(function (i) {
         var ep = episodes[i];
-        return (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' '))
+        return (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' ') + (ep.src ? ' ' + SRC_LABEL[ep.src] + ' ' + SRC_BADGE[ep.src] : ''))
           .toLowerCase().indexOf(q) !== -1;
       });
       hits.forEach(function (i) { ul.appendChild(itemLi(i, null)); });
-      $('count').textContent = hits.length + '편 찾음 / 전체 ' + episodes.length + '편';
+      $('count').textContent = sp + hits.length + '편 찾음 / 전체 ' + pool.length + '편';
       return;
     }
 
@@ -179,12 +237,14 @@
       var openSet = {};
       try { openSet = JSON.parse(safeGet('openGroups') || '{}'); } catch (e) {}
       categories.forEach(function (c) {
+        if (!catSrcOk(c)) return;
         var idx = inCat(c.key);
         if (!idx.length) return;
         var d = document.createElement('details'); d.className = 'group';
         var sm = document.createElement('summary');
         sm.innerHTML = '<span></span><span class="gc"></span>';
-        sm.firstChild.textContent = c.name;
+        sm.firstChild.textContent = catLabel(c);
+        if (c.src && curSrc() === 'all') { sm.firstChild.appendChild(document.createTextNode(' ')); sm.firstChild.appendChild(srcBadge(c.src)); }
         sm.lastChild.textContent = idx.length + '편';
         d.appendChild(sm);
         var inner = document.createElement('ul'); inner.className = 'list';
@@ -197,21 +257,22 @@
         });
         groups.appendChild(d);
       });
-      $('count').textContent = '소설 ' + allIdx().length + '편' + hiddenNote();
+      $('count').textContent = sp + '소설 ' + allIdx().length + '편' + hiddenNote();
       return;
     }
 
-    if (view === 'all' || !catName[view]) {
+    var realCat = categories.filter(function (c) { return c.key === view; })[0];
+    if (view === 'all' || !catName[view] || (realCat && !catSrcOk(realCat))) {
       view = 'all';
       var all = allIdx();
       all.forEach(function (i) { ul.appendChild(itemLi(i, null)); });
-      $('count').textContent = '소설 ' + all.length + '편' + hiddenNote();
+      $('count').textContent = sp + '소설 ' + all.length + '편' + hiddenNote();
       return;
     }
 
     var list = inCat(view);
     list.forEach(function (i) { ul.appendChild(itemLi(i, view)); });
-    $('count').textContent = catName[view] + ' · ' + list.length + '편';
+    $('count').textContent = (realCat && realCat.src && !sp ? SRC_LABEL[realCat.src] + ' · ' : sp) + catName[view] + ' · ' + list.length + '편';
   }
   function hiddenNote() {
     var d = inCat('@dislike').length, n = inCat('@notnovel').length, parts = [];
@@ -235,9 +296,12 @@
   $('selCancel').onclick = endSelect;
   $('selNot').onclick = function () { applyKindBulk('notnovel'); };
   $('selNovel').onclick = function () { applyKindBulk('novel'); };
-  function epMeta(i) {
-    var ep = episodes[i];
-    return { num: ep.num, title: ep.title, ids: ep.ids || [ep.id], catNames: ep.cats.map(function (k) { return catName[k]; }) };
+  function epMeta(i) { return metaOf(episodes[i]); }
+  /** 저장용 정보: 기존 글은 예전 형식 그대로, 출처별 글은 출처·키(·예전 번호 키)를 더한다 */
+  function metaOf(ep) {
+    var m = { num: ep.num, title: ep.title, ids: ep.ids || [ep.id], catNames: ep.cats.map(function (k) { return catName[k]; }) };
+    if (ep.src) { m.src = ep.src; m.key = ep.key; if (legacyFb[ep.key]) m.legacyKey = legacyFb[ep.key]; }
+    return m;
   }
   function applyKindBulk(kind) {
     var list = Object.keys(selected).map(Number);
@@ -257,10 +321,11 @@
       var chunk = chunks.shift();
       $('selCount').textContent = '저장 중… ' + done + ' / ' + list.length;
       var metas = chunk.map(epMeta);
-      metas.forEach(function (m) { localTouch[m.num] = Date.now(); });
+      metas.forEach(function (m) { localTouch[m.key || String(m.num)] = Date.now(); });
       Core.saveKinds(metas, kind).then(function (res) {
-        Object.keys(res.items).forEach(function (num) {
-          if (res.items[num]) feedback[num] = res.items[num]; else delete feedback[num];
+        Object.keys(res.items).forEach(function (k) {
+          if (res.items[k]) feedback[k] = res.items[k]; else delete feedback[k];
+          if (legacyFb[k]) { delete feedback[legacyFb[k]]; delete legacyFb[k]; }
         });
         done += chunk.length; step();
       }, function (e) {
@@ -277,7 +342,9 @@
     var idx = findLast(lastRead);
     if (idx < 0) return;
     var cat = lastRead.cat && episodes[idx].cats.indexOf(lastRead.cat) !== -1 ? lastRead.cat : '';
-    $('resumeTitle').textContent = episodes[idx].num + '. ' + episodes[idx].title + (cat ? '  (' + catName[cat] + ')' : '');
+    var re = episodes[idx], rs = re.src ? SRC_LABEL[re.src] : '';
+    var rp = [rs, cat ? catName[cat] : ''].filter(Boolean).join(' · ');
+    $('resumeTitle').textContent = re.num + '. ' + re.title + (rp ? '  (' + rp + ')' : '');
     $('resume').style.display = 'block';
     var lr = lastRead;
     $('resume').onclick = function () { openEpisode(idx, cat, true, { scroll: lr.scroll, frac: lr.frac, mode: lr.mode }); };
@@ -288,37 +355,45 @@
     return -1;
   }
   function indexOfNum(num) {
-    for (var i = 0; i < episodes.length; i++) if (episodes[i].num === num) return i;
+    for (var i = 0; i < episodes.length; i++) if (episodes[i].num === num && !episodes[i].src) return i;
     return -1;
   }
-  /** 마지막으로 읽은 화 찾기: 같은 ID, 없으면(대표 사본이 바뀐 경우) 같은 번호 */
+  function indexOfKey(k) {
+    for (var i = 0; i < episodes.length; i++) if (keyOf(episodes[i]) === k) return i;
+    return -1;
+  }
+  /** 마지막으로 읽은 화 찾기: 같은 ID, 없으면(대표 사본이 바뀐 경우) 같은 키(출처+번호), 예전 기록은 기존 글 번호 */
   function findLast(lr) {
     var i = indexOfId(lr.id);
-    if (i < 0 && lr.num) i = indexOfNum(lr.num);
+    if (i < 0 && lr.key) i = indexOfKey(lr.key);
+    if (i < 0 && lr.num && !lr.key) i = indexOfNum(lr.num);
     return i;
   }
 
   // ---------- 주소·뒤로 가기 (history.pushState + ?ep=) ----------
   function homeUrl() { return location.pathname; }
-  function epUrl(num) { return location.pathname + '?ep=' + encodeURIComponent(num); }
+  function epUrl(ep) { return location.pathname + '?ep=' + encodeURIComponent(keyOf(ep)); }
 
   // ---------- 화면 전환 ----------
   var homeScroll = 0, readerOpen = false;
-  function showHome(push) {
+  function showHome(push, toArc) {
     flushFeedback();
     saveScroll();
     openSeqNo++;
     pos = -1;
+    leaveArc();
     readerOpen = false; applyLayout();
     Settings.setReading(false);
     $('reader').style.display = 'none';
+    $('archive').style.display = 'none';
     $('home').style.display = 'block';
     $('backBtn').style.display = 'none';
     $('headTitle').textContent = '에피소드 리더';
     renderHome(); showResume();
     if (push) history.pushState({ view: 'home' }, '', homeUrl());
     safeSet('inReader', '');
-    window.scrollTo(0, homeScroll);
+    if (toArc && !$('arcEntry').hidden) { $('arcEntry').open = true; $('arcEntry').scrollIntoView({ block: 'start' }); }
+    else window.scrollTo(0, homeScroll);
   }
 
   function setSeq(cat) {
@@ -326,7 +401,9 @@
     seq = seqCat ? inCat(seqCat) : allIdx();
   }
   function updateNav() {
-    $('where').textContent = (seqCat ? catName[seqCat] : '전체') + ' · ' + (pos + 1) + ' / ' + seq.length;
+    var ce = episodes[seq[pos]];
+    var sp = ce && ce.src ? SRC_LABEL[ce.src] + ' · ' : '';
+    $('where').textContent = sp + (seqCat ? catName[seqCat] : '전체') + ' · ' + (pos + 1) + ' / ' + seq.length;
     ['prevTop', 'prevBottom', 'pbPrev'].forEach(function (b) { $(b).disabled = pos === 0; });
     ['nextTop', 'nextBottom', 'pbNext'].forEach(function (b) { $(b).disabled = pos === seq.length - 1; });
   }
@@ -340,10 +417,13 @@
     p = normPos(p);
     if (selecting) { selecting = false; selected = {}; document.body.classList.remove('selecting'); $('selBtn').textContent = '여러 편 선택'; }
     flushFeedback();
-    if (pos < 0) homeScroll = window.scrollY; else saveScroll();
+    if (arcOpen || arcListing) { leaveArc(); }
+    else if (pos < 0) homeScroll = window.scrollY; else saveScroll();
+    $('archive').style.display = 'none';
     setSeq(cat);
     pos = seq.indexOf(i);
     if (pos < 0) { setSeq(''); pos = seq.indexOf(i); }
+    if (pos < 0) { seqCat = ''; seq = allIdxAnySrc(); pos = seq.indexOf(i); }   // 다른 출처의 글(이어 읽기 등)
     if (pos < 0) { seq = everyIdx(); pos = i; }   // 숨긴 글을 검색에서 연 경우
     var ep = episodes[i];
     $('home').style.display = 'none';
@@ -353,7 +433,7 @@
     $('headTitle').textContent = ep.num + '. ' + ep.title;
     $('endTitle').textContent = ep.num + '. ' + ep.title + ' · 끝';
     updateNav();
-    if (push) history.pushState({ view: 'ep', id: ep.id, cat: seqCat }, '', epUrl(ep.num));
+    if (push) history.pushState({ view: 'ep', id: ep.id, cat: seqCat }, '', epUrl(ep));
     safeSet('inReader', '1');
     readerOpen = true; applyLayout(); hideEnd(true);
     document.body.classList.remove('chrome');
@@ -435,6 +515,7 @@
   function remember(ep, scroll, frac) {
     lastRead = { id: ep.id, num: ep.num, cat: seqCat, scroll: scroll, frac: Math.round((frac || 0) * 10000) / 10000,
       mode: Settings.get().mode, at: Date.now() };
+    if (ep.src) lastRead.key = ep.key;
     safeSet('lastRead', JSON.stringify(lastRead));
     scheduleStateSync();
   }
@@ -466,6 +547,7 @@
   var STATE_MIN_GAP = 15000;
   var stateDirty = false, stateTimer = null, lastStateWrite = 0;
   function scheduleStateSync() {
+    if (arcOpen || arcListing) return;   // 보관 폴더에서는 읽기 기록을 남기지 않는다
     stateDirty = true;
     if (stateTimer) return;
     var wait = Math.max(3000, STATE_MIN_GAP - (Date.now() - lastStateWrite));
@@ -473,6 +555,7 @@
   }
   function flushState(keepalive) {
     clearTimeout(stateTimer); stateTimer = null;
+    if (arcOpen || arcListing) return;
     if (!stateDirty || !lastRead) return;
     if (!Drive.hasValidToken()) return;   // 연결이 갱신되면 다시 시도
     if (keepalive && !Core.hasStateFile()) keepalive = false;
@@ -483,7 +566,7 @@
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') {
       flushFeedback();
-      if (readerOpen) { saveScroll(); stateDirty = stateDirty || !!lastRead; }
+      if (readerOpen && !arcOpen) { saveScroll(); stateDirty = stateDirty || !!lastRead; }
       flushState(true);
     } else if (document.visibilityState === 'visible') {
       if (booted && Date.now() - lastRefresh > 10 * 60 * 1000 && Drive.hasValidToken()) refresh();
@@ -501,10 +584,10 @@
 
   // ---------- 재독 피드백 ----------
   var fbEp = null, fbIdx = -1, fbKind = '', fbRating = '', fbDirty = false, fbTimer = null, fbSaving = false, fbQueued = false;
-  function sameEp(a, b) { return !!(a && b && a.num === b.num); }
+  function sameEp(a, b) { return !!(a && b && keyOf(a) === keyOf(b)); }
   function fillFeedback(ep) {
     fbEp = ep; fbIdx = indexOfId(ep.id); fbDirty = false;
-    var f = feedback[ep.num] || {};
+    var f = feedback[keyOf(ep)] || {};
     fbRating = f.rating || '';
     fbKind = f.kind || '';
     paintKind();
@@ -516,18 +599,18 @@
   }
   function paintKind() {
     if (fbIdx < 0) return;
-    var nn = isNotNovelWith(fbIdx, fbKind), num = episodes[fbIdx].num, why = '';
+    var nn = isNotNovelWith(fbIdx, fbKind), cand = candOf(episodes[fbIdx]), why = '';
     if (nn) {
       why = fbKind === 'notnovel' ? '소설 아님으로 표시한 글이에요.' : '설정과 대화 폴더라 기본으로 소설 목록에서 빠져 있어요.';
       $('kindBtn').textContent = '소설 목록에 넣기';
     } else {
-      if (!fbKind && candidates[num]) why = '소설 아님 후보예요. 자동 판단: ' + candidates[num];
+      if (!fbKind && cand) why = '소설 아님 후보예요. 자동 판단: ' + cand;
       else if (fbKind === 'novel') why = '소설 맞음으로 표시한 글이에요.';
       else why = '설정·잡담이라면 소설 목록에서 뺄 수 있어요.';
       $('kindBtn').textContent = '📄 소설 아님';
     }
     $('kindDesc').textContent = why;
-    if (!nn && !fbKind && candidates[num]) {
+    if (!nn && !fbKind && cand) {
       $('kindBtn').textContent = '📄 소설 아님';
       $('kindDesc').innerHTML = '';
       $('kindDesc').appendChild(document.createTextNode(why + ' '));
@@ -575,13 +658,13 @@
     var ep = fbEp, payload = { rating: fbRating, good: $('fbGood').value, bad: $('fbBad').value, kind: fbKind };
     fbDirty = false; fbSaving = true;
     $('fbStatus').textContent = '저장 중…';
-    var meta = { num: ep.num, title: ep.title, ids: ep.ids || [ep.id],
-      catNames: ep.cats.map(function (k) { return catName[k]; }) };
-    localTouch[ep.num] = Date.now();
+    var meta = metaOf(ep), k = keyOf(ep);
+    localTouch[k] = Date.now();
     Core.saveFeedback(meta, payload).then(function (res) {
       fbSaving = false;
-      localTouch[ep.num] = Date.now();
-      if (res.item) feedback[ep.num] = res.item; else delete feedback[ep.num];
+      localTouch[k] = Date.now();
+      if (res.item) feedback[k] = res.item; else delete feedback[k];
+      if (legacyFb[k]) { delete feedback[legacyFb[k]]; delete legacyFb[k]; }
       saveListCache();
       if (sameEp(fbEp, ep)) { $('fbStatus').textContent = '저장됨 ' + res.updated + ' · 원본 파일과 모음 파일에 반영'; paintKind(); }
       if (fbQueued) { fbQueued = false; fbDirty = true; saveFeedbackNow(); }
@@ -598,7 +681,7 @@
   // page = 지금 보이는 화면(양쪽 보기면 두 쪽 묶음)의 번호, pageCount = 화면 수, cols = 전체 쪽 수
   var page = 0, pageCount = 1, pageStep = 0, curAnchor = 0, textLen = 0, atEnd = false;
   var cols = 1, perView = 1, colW = 0, padL = 0;
-  function isPaged() { return readerOpen && Settings.get().mode === 'page'; }
+  function isPaged() { return readerOpen && Settings.get().mode === 'page' && !arcForceScroll; }
   /** 양쪽 보기: 자동이면 두 쪽이 넉넉히 들어가는 넓은 화면(폴드 안쪽 화면 등)에서만. 바깥 화면·일반 폰은 한 쪽. */
   function spreadWanted() {
     var m = Settings.get().spread;
@@ -695,10 +778,10 @@
     $('pageProg').style.width = ((page + 1) / pageCount * 100) + '%';
     if (user) {
       curAnchor = probeAnchor();
-      saveScroll(); scheduleStateSync();
+      if (!arcOpen) { saveScroll(); scheduleStateSync(); }
     }
   }
-  function hasEndPage() { return !!$('meta').childNodes.length || $('fbMain').style.display !== 'none'; }
+  function hasEndPage() { return !arcOpen && (!!$('meta').childNodes.length || $('fbMain').style.display !== 'none'); }
   function showEnd() {
     if (!isPaged()) { $('meta').scrollIntoView({ block: 'start' }); return; }
     atEnd = true; document.body.classList.add('atEnd'); document.body.classList.remove('chrome');
@@ -713,6 +796,7 @@
     document.body.classList.remove('chrome');
     if (atEnd) { if (pos < seq.length - 1) next(); else toast('마지막 화예요.'); return; }
     if (page < pageCount - 1) { goPage(page + 1, true); return; }
+    if (arcOpen) { if (arc.i < arc.list.length - 1) openArcFile(arc.i + 1, true); else toast('이 폴더의 마지막 파일이에요.'); return; }
     if (hasEndPage()) { showEnd(); return; }
     if (pos < seq.length - 1) next(); else toast('마지막 화예요.');
   }
@@ -720,6 +804,7 @@
     document.body.classList.remove('chrome');
     if (atEnd) { hideEnd(); return; }
     if (page > 0) { goPage(page - 1, true); return; }
+    if (arcOpen) { if (arc.i > 0) openArcFile(arc.i - 1, true, { end: true }); else toast('이 폴더의 첫 파일이에요.'); return; }
     if (pos > 0) openEpisode(seq[pos - 1], seqCat, true, { end: true });
     else toast('첫 화예요.');
   }
@@ -906,13 +991,27 @@
   });
 
   // ---------- 버튼 ----------
-  function prev() { if (pos > 0) openEpisode(seq[pos - 1], seqCat, true); }
-  function next() { if (pos >= 0 && pos < seq.length - 1) openEpisode(seq[pos + 1], seqCat, true); }
+  function prev() {
+    if (arcOpen) { if (arc.i > 0) openArcFile(arc.i - 1, true); return; }
+    if (pos > 0) openEpisode(seq[pos - 1], seqCat, true);
+  }
+  function next() {
+    if (arcOpen) { if (arc.i < arc.list.length - 1) openArcFile(arc.i + 1, true); return; }
+    if (pos >= 0 && pos < seq.length - 1) openEpisode(seq[pos + 1], seqCat, true);
+  }
   $('prevTop').onclick = $('prevBottom').onclick = $('pbPrev').onclick = prev;
   $('nextTop').onclick = $('nextBottom').onclick = $('pbNext').onclick = next;
-  $('listTop').onclick = $('listBottom').onclick = $('backBtn').onclick = $('pbList').onclick = function () { showHome(true); };
+  $('listTop').onclick = $('listBottom').onclick = $('pbList').onclick = function () {
+    if (arcOpen) { showArchive(arc.stack, true); return; }
+    showHome(true);
+  };
+  $('backBtn').onclick = function () {
+    if (arcOpen) { showArchive(arc.stack, true); return; }
+    if (arcListing) { if (arc.stack.length > 1) showArchive(arc.stack.slice(0, -1), true); else showHome(true, true); return; }
+    showHome(true);
+  };
   document.addEventListener('keydown', function (e) {
-    if (pos < 0 || Settings.isOpen() || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if ((pos < 0 && !arcOpen) || Settings.isOpen() || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     if (isPaged()) {
       if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) { e.preventDefault(); nextPage(); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (e.key === ' ' && e.shiftKey)) { e.preventDefault(); prevPage(); }
@@ -924,9 +1023,298 @@
 
   window.addEventListener('popstate', function (e) {
     var s = e.state || {};
+    if (s.view === 'arc' && s.stack && s.stack.length) { showArchive(s.stack, false); return; }
+    if (s.view === 'arcfile' && s.stack && s.stack.length) { reopenArcFile(s.stack, s.fid); return; }
     if (s.view === 'ep') { var i = indexOfId(s.id); if (i >= 0) { openEpisode(i, s.cat || '', false); return; } }
     showHome(false);
   });
+
+
+  // ---------- 보관 폴더 (목록에서 빠진 폴더를 읽기 전용으로 둘러보기) ----------
+  // 드라이브에는 목록 조회·내려받기(GET)만 한다. 피드백·소설 아님·읽은 위치 기록 없음.
+  var arc = { stack: [], files: [], list: [], i: -1 };
+  var arcOpen = false;        // 보관 폴더의 파일을 읽는 중
+  var arcListing = false;     // 보관 폴더 목록을 보는 중
+  var arcForceScroll = false; // 아주 큰 파일은 쪽 넘기기 대신 스크롤
+  var arcMem = {};            // 폴더 ID -> {at, files} (이번 실행 동안)
+  var arcScroll = {};         // 폴더 ID -> 목록 스크롤 위치
+  var ARC_BIG = 3 * 1024 * 1024;
+  var ARC_PAGED_MAX = 600000; // 이보다 긴 글은 쪽 나누기가 느려져서 스크롤로 보여 준다
+  var NAV_TEXT = { prevTop: '← 이전 화', prevBottom: '← 이전 화', pbPrev: '← 이전 화', nextTop: '다음 화 →', nextBottom: '다음 화 →', pbNext: '다음 화 →' };
+  var NAV_ARC = { prevTop: '← 이전 파일', prevBottom: '← 이전 파일', pbPrev: '← 이전 파일', nextTop: '다음 파일 →', nextBottom: '다음 파일 →', pbNext: '다음 파일 →' };
+  function setNavText(m) { Object.keys(m).forEach(function (id) { $(id).textContent = m[id]; }); }
+  function arcState() { return { open: arcOpen, listing: arcListing, folder: arc.stack.length ? arc.stack[arc.stack.length - 1].id : null, i: arc.i, n: arc.list.length, forceScroll: arcForceScroll }; }
+  function leaveArc() {
+    if (arcListing && arc.stack.length) arcScroll[arc.stack[arc.stack.length - 1].id] = window.scrollY;
+    if (arcOpen) { setNavText(NAV_TEXT); $('pbEnd').hidden = false; document.body.classList.remove('arcfile'); }
+    arcOpen = false; arcListing = false;
+    if (arcForceScroll) { arcForceScroll = false; }
+  }
+  /** 폴더 목록: 이번 실행 기억 → IndexedDB 저장본 → 드라이브. 목록을 새로 고친 뒤(lastRefresh)라면 뒤에서 다시 받아 맞춘다. */
+  function arcLoad(id, force, onFresh) {
+    var mem = arcMem[id];
+    if (mem && !force && mem.at >= lastRefresh) return Promise.resolve(mem.files);
+    var net = function () {
+      return Core.listArchiveFolder(id).then(function (files) {
+        var rec = { at: Date.now(), files: files };
+        arcMem[id] = rec; idb.put('arc:' + id, rec);
+        return files;
+      });
+    };
+    if (force) return net();
+    if (mem) { net().then(function (f) { if (onFresh) onFresh(f); }, function () {}); return Promise.resolve(mem.files); }
+    return idb.get('arc:' + id).then(function (hit) {
+      if (hit && hit.files) {
+        arcMem[id] = hit;
+        if (hit.at < lastRefresh || !lastRefresh) net().then(function (f) { if (onFresh) onFresh(f); }, function () {});
+        return hit.files;
+      }
+      return net();
+    });
+  }
+  function isFolder(f) { return f.mimeType === Drive.FOLDER_MIME; }
+  function fmtSize(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return '';
+    if (n < 1024) return n + 'B';
+    if (n < 1024 * 1024) return Math.round(n / 1024) + 'KB';
+    return (Math.round(n / 1024 / 1024 * 10) / 10) + 'MB';
+  }
+  function fmtDate(iso) {
+    var d = new Date(iso); if (isNaN(d)) return '';
+    var t = new Date(d.getTime() + 9 * 3600e3), p = function (x) { return (x < 10 ? '0' : '') + x; };
+    return t.getUTCFullYear() + '-' + p(t.getUTCMonth() + 1) + '-' + p(t.getUTCDate()) + ' ' + p(t.getUTCHours()) + ':' + p(t.getUTCMinutes());
+  }
+  function countText(files) {
+    var nf = files.filter(function (f) { return !isFolder(f); }).length, nd = files.length - nf;
+    return '파일 ' + nf + (nd ? ' · 폴더 ' + nd : '');
+  }
+  /** 파일 종류: 확장자 먼저, 없으면 mimeType */
+  function arcKind(f) {
+    var n = f.name.toLowerCase(), mt = f.mimeType || '';
+    if (mt === 'application/vnd.google-apps.document') return 'gdoc';
+    if (/\.(md|markdown)$/.test(n)) return 'md';
+    if (/\.txt$/.test(n)) return 'txt';
+    if (/\.json$/.test(n)) return 'json';
+    if (/\.html?$/.test(n)) return 'html';
+    if (mt.indexOf('application/vnd.google-apps.') === 0) return 'info';
+    if (mt === 'text/markdown') return 'md';
+    if (mt === 'application/json') return 'json';
+    if (mt === 'text/html') return 'html';
+    if (mt === 'text/plain') return 'txt';
+    return 'info';
+  }
+  var KIND_ICON = { md: '📄', txt: '📄', gdoc: '📝', json: '🧾', html: '🌐', info: '📎' };
+
+  // 홈 맨 아래 '보관 폴더' (접힌 상태, 처음 펼칠 때만 불러온다)
+  var arcRootsDrawn = false;
+  function drawArcRoots() {
+    var ul = $('arcRoots'); ul.innerHTML = '';
+    archiveRoots.forEach(function (r) {
+      var li = document.createElement('li');
+      li.setAttribute('data-id', r.id);
+      li.innerHTML = '<span class="ai">🗂</span><span class="t"><span class="an"></span><span class="ao"></span></span><span class="ac">…</span>';
+      li.querySelector('.an').textContent = r.label;
+      li.querySelector('.ao').textContent = r.path;
+      li.onclick = function () { showArchive([{ id: r.id, label: r.label, name: r.name }], true); };
+      ul.appendChild(li);
+      arcLoad(r.id, false, function (f) { li.querySelector('.ac').textContent = countText(f); }).then(function (files) {
+        li.querySelector('.ac').textContent = countText(files);
+      }, function () { li.querySelector('.ac').textContent = '불러오지 못함'; });
+    });
+    arcRootsDrawn = true;
+  }
+  $('arcEntry').addEventListener('toggle', function () { if ($('arcEntry').open && !arcRootsDrawn) drawArcRoots(); });
+
+  function arcHeader(stack) { return '보관 폴더 · ' + stack[stack.length - 1].label; }
+  function crumbs(stack) {
+    var nav = $('arcCrumbs'); nav.innerHTML = '';
+    var top = document.createElement('button'); top.textContent = '보관 폴더'; top.className = 'crumb';
+    top.onclick = function () { showHome(true, true); };
+    nav.appendChild(top);
+    stack.forEach(function (f, k) {
+      var sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = '›'; nav.appendChild(sep);
+      var b = document.createElement('button'); b.className = 'crumb'; b.textContent = f.label;
+      if (k === stack.length - 1) { b.disabled = true; b.setAttribute('aria-current', 'page'); }
+      else b.onclick = function () { showArchive(stack.slice(0, k + 1), true); };
+      nav.appendChild(b);
+    });
+  }
+  function showArchive(stack, push) {
+    flushFeedback();
+    flushState(false);   // 앞서 읽던 화의 기록은 들어가기 전에 마무리
+    if (arcListing && arc.stack.length) arcScroll[arc.stack[arc.stack.length - 1].id] = window.scrollY;
+    if (pos < 0 && !arcOpen && !arcListing) homeScroll = window.scrollY;
+    if (pos >= 0) { saveScroll(); }
+    if (arcOpen) { setNavText(NAV_TEXT); $('pbEnd').hidden = false; document.body.classList.remove('arcfile'); }
+    arcOpen = false; arcForceScroll = false;
+    pos = -1; openSeqNo++;
+    readerOpen = false; applyLayout(); hideEnd(true);
+    Settings.setReading(false);
+    safeSet('inReader', '');
+    arcListing = true;
+    arc.stack = stack.map(function (f) { return { id: f.id, label: f.label, name: f.name }; });
+    var cur = arc.stack[arc.stack.length - 1];
+    $('home').style.display = 'none'; $('reader').style.display = 'none';
+    $('archive').style.display = 'block';
+    $('backBtn').style.display = 'inline-block';
+    $('headTitle').textContent = arcHeader(arc.stack);
+    crumbs(arc.stack);
+    if (push) history.pushState({ view: 'arc', stack: arc.stack }, '', homeUrl() + '?arc=' + encodeURIComponent(cur.id));
+    $('arcList').innerHTML = ''; $('arcCount').textContent = '';
+    $('arcStatus').style.display = 'block'; $('arcStatus').textContent = '폴더를 불러오는 중이에요…';
+    var my = ++arcSeqNo;
+    var draw = function (files) {
+      if (my !== arcSeqNo || !arcListing) return;
+      arc.files = files;
+      var y = arcScroll[cur.id] || 0;
+      drawArcList(files);
+      window.scrollTo(0, y);
+    };
+    arcLoad(cur.id, false, draw).then(draw, function (e) {
+      if (my !== arcSeqNo) return;
+      $('arcStatus').textContent = '폴더를 불러오지 못했어요: ' + errMsg(e);
+    });
+  }
+  var arcSeqNo = 0;
+  function drawArcList(files) {
+    var ul = $('arcList'); ul.innerHTML = '';
+    $('arcStatus').style.display = files.length ? 'none' : 'block';
+    $('arcStatus').textContent = files.length ? '' : '비어 있는 폴더예요.';
+    $('arcCount').textContent = countText(files);
+    var plain = files.filter(function (f) { return !isFolder(f); });
+    files.forEach(function (f) {
+      var li = document.createElement('li');
+      li.setAttribute('data-id', f.id);
+      var k = isFolder(f) ? 'dir' : arcKind(f);
+      li.className = 'arc-' + k;
+      li.innerHTML = '<span class="ai"></span><span class="t"><span class="an"></span><span class="ao"></span></span>';
+      li.querySelector('.ai').textContent = k === 'dir' ? '📁' : KIND_ICON[k];
+      li.querySelector('.an').textContent = f.name;
+      li.querySelector('.ao').textContent = k === 'dir' ? '폴더' : [fmtSize(f.size), fmtDate(f.modifiedTime)].filter(Boolean).join(' · ');
+      li.onclick = function () {
+        if (k === 'dir') { showArchive(arc.stack.concat([{ id: f.id, label: f.name, name: f.name }]), true); return; }
+        arcScroll[arc.stack[arc.stack.length - 1].id] = window.scrollY;
+        arc.list = plain;
+        openArcFile(plain.indexOf(f), true);
+      };
+      ul.appendChild(li);
+    });
+  }
+  $('arcRefresh').onclick = function () {
+    if (!arc.stack.length) return;
+    var cur = arc.stack[arc.stack.length - 1];
+    $('arcStatus').style.display = 'block'; $('arcStatus').textContent = '새로 불러오는 중이에요…';
+    arcLoad(cur.id, true).then(function (files) { if (arcListing) { arc.files = files; drawArcList(files); } }, function (e) {
+      $('arcStatus').textContent = '새로 불러오지 못했어요: ' + errMsg(e);
+    });
+  };
+  function reopenArcFile(stack, fid) {
+    arc.stack = stack;
+    var cur = stack[stack.length - 1];
+    arcLoad(cur.id).then(function (files) {
+      arc.files = files; arc.list = files.filter(function (f) { return !isFolder(f); });
+      var i = -1; arc.list.forEach(function (f, k) { if (f.id === fid) i = k; });
+      if (i < 0) showArchive(stack, false); else openArcFile(i, false);
+    }, function () { showArchive(stack, false); });
+  }
+  function arcInfo(f, note) {
+    var box = document.createElement('div'); box.className = 'arcinfo';
+    var h = document.createElement('h2'); h.textContent = f.name; box.appendChild(h);
+    var dl = document.createElement('dl');
+    [['종류', f.mimeType || '-'], ['크기', fmtSize(f.size) || '-'], ['수정', fmtDate(f.modifiedTime) || '-']].forEach(function (r) {
+      var dt = document.createElement('dt'); dt.textContent = r[0]; var dd = document.createElement('dd'); dd.textContent = r[1];
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    box.appendChild(dl);
+    if (note) { var p = document.createElement('p'); p.className = 'note'; p.textContent = note; box.appendChild(p); }
+    var a = document.createElement('a'); a.className = 'drivelink';
+    a.href = 'https://drive.google.com/file/d/' + encodeURIComponent(f.id) + '/view';
+    a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '구글 드라이브에서 열기';
+    box.appendChild(a);
+    return box;
+  }
+  function openArcFile(i, push, p) {
+    if (i < 0 || i >= arc.list.length) return;
+    p = p || {};
+    var f = arc.list[i], cur = arc.stack[arc.stack.length - 1];
+    if (arcListing) arcScroll[cur.id] = window.scrollY;
+    arcListing = false; arcOpen = true; arc.i = i;
+    pos = -1;
+    arcForceScroll = false;
+    $('home').style.display = 'none'; $('archive').style.display = 'none';
+    $('reader').style.display = 'block';
+    $('backBtn').style.display = 'inline-block';
+    $('fb').style.display = 'none';
+    $('pbEnd').hidden = true;
+    document.body.classList.add('arcfile');
+    setNavText(NAV_ARC);
+    $('headTitle').textContent = arcHeader(arc.stack);
+    $('endTitle').textContent = f.name;
+    $('meta').innerHTML = '';
+    var setWhere = function () { $('where').textContent = f.name + ' · ' + (i + 1) + ' / ' + arc.list.length; };
+    setWhere();
+    ['prevTop', 'prevBottom', 'pbPrev'].forEach(function (b) { $(b).disabled = i === 0; });
+    ['nextTop', 'nextBottom', 'pbNext'].forEach(function (b) { $(b).disabled = i === arc.list.length - 1; });
+    if (push) history.pushState({ view: 'arcfile', stack: arc.stack, fid: f.id }, '', homeUrl() + '?arc=' + encodeURIComponent(cur.id) + '&f=' + encodeURIComponent(f.id));
+    readerOpen = true; applyLayout(); hideEnd(true);
+    document.body.classList.remove('chrome');
+    Settings.setReading(true);
+    window.scrollTo(0, 0);
+    var my = ++openSeqNo;
+    var layout = function () {
+      textLen = $('article').textContent.length;
+      watchImages();
+      if (isPaged()) {
+        paginate();
+        if (p.end) { goPage(pageCount - 1); curAnchor = probeAnchor(); } else { curAnchor = 0; goPage(0); }
+      } else window.scrollTo(0, 0);
+    };
+    var kind = arcKind(f);
+    if (kind === 'info') {
+      $('article').innerHTML = ''; $('article').appendChild(arcInfo(f, '이 앱에서는 미리 볼 수 없는 형식이에요.'));
+      layout(); return;
+    }
+    if (Number(f.size) > ARC_BIG && !p.force) {
+      $('article').innerHTML = '';
+      var box = arcInfo(f, '큰 파일이에요 (' + fmtSize(f.size) + '). 여는 데 시간이 걸리고 휴대폰이 느려질 수 있어요.');
+      var go = document.createElement('button'); go.className = 'primary bigopen'; go.textContent = '그래도 열기';
+      go.onclick = function () { openArcFile(i, false, { force: true, end: p.end }); };
+      box.insertBefore(go, box.querySelector('.drivelink'));
+      $('article').appendChild(box);
+      layout(); return;
+    }
+    $('article').innerHTML = '<div class="status">파일을 불러오는 중이에요…</div>';
+    if (isPaged()) { paginate(); goPage(0); }
+    Core.getArchiveContent(f).then(function (text) {
+      if (my !== openSeqNo || !arcOpen) return;
+      var art = $('article');
+      art.innerHTML = '';
+      if (text.length > ARC_PAGED_MAX && Settings.get().mode === 'page') {
+        arcForceScroll = true; applyLayout();
+        var n = document.createElement('p'); n.className = 'arcnote'; n.textContent = '아주 긴 파일이라 이 파일은 쪽 넘기기 대신 스크롤로 보여 줘요.';
+        art.appendChild(n);
+      }
+      if (kind === 'md') {
+        var div = document.createElement('div');
+        div.innerHTML = DOMPurify.sanitize(marked.parse(text));
+        art.appendChild(div);
+      } else {
+        var pre = document.createElement('pre');
+        pre.className = kind === 'json' || kind === 'html' ? 'mono' : 'plain';
+        if (kind === 'json') { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {} }
+        pre.textContent = text;   // HTML도 글자로만 (실행하지 않음)
+        art.appendChild(pre);
+      }
+      layout();
+    }, function (e) {
+      if (my !== openSeqNo) return;
+      $('article').innerHTML = '<div class="status">파일을 불러오지 못했어요. <button class="retry">다시 시도</button><br><small></small></div>';
+      $('article').querySelector('small').textContent = errMsg(e);
+      $('article').querySelector('.retry').onclick = function () { openArcFile(i, false, p); };
+      layout();
+    });
+  }
 
   // ---------- 드라이브 연결 화면 ----------
   var toastTimer = null;
@@ -967,7 +1355,7 @@
     clearTimeout(listTimer);
     listTimer = setTimeout(function () {
       var data = { v: 1, at: Date.now(), episodes: episodes, categories: categories, feedback: feedback,
-        candidates: candidates, keepNovel: keepNovel, hiddenFolders: hiddenFolders };
+        candidates: candidates, keepNovel: keepNovel, hiddenFolders: hiddenFolders, legacyFb: legacyFb, archive: archiveRoots };
       var s = JSON.stringify(data);
       try { LS.setItem('listCache', s); } catch (e) { try { LS.removeItem('listCache'); } catch (e2) {} }
       idb.put('listCache', data);
@@ -987,11 +1375,17 @@
     candidates = (data && data.candidates) || {};
     keepNovel = (data && data.keepNovel) || {};
     hiddenFolders = (data && data.hiddenFolders) || [];
+    legacyFb = (data && data.legacyFb) || {};
+    archiveRoots = (data && data.archive) || [];
+    numCount = {};
+    episodes.forEach(function (e) { numCount[e.num] = (numCount[e.num] || 0) + 1; });
+    arcRootsDrawn = false;
+    sourcesPresent = episodes.some(function (e) { return !!e.src; }) || categories.some(function (c) { return !!c.src; });
     $('homeStatus').style.display = episodes.length ? 'none' : 'block';
     if (!episodes.length) $('homeStatus').textContent = '에피소드 파일을 찾지 못했어요.';
   }
   function signature() {
-    return JSON.stringify([episodes.map(function (e) { return [e.id, e.num, e.title, e.cats]; }), categories, feedback, candidates, keepNovel, hiddenFolders]);
+    return JSON.stringify([episodes.map(function (e) { return [e.id, e.num, e.title, e.cats, e.src]; }), categories, feedback, candidates, keepNovel, hiddenFolders, archiveRoots]);
   }
   /** 백그라운드로 받은 새 목록 반영: 읽던 화·선택·입력 중인 피드백은 그대로 둔다. */
   function applyFresh(data, scanStart) {
@@ -1001,8 +1395,8 @@
     var oldMod = {};
     episodes.forEach(function (e) { oldMod[e.id] = e.modified; });
     var fresh = data.feedback || {};
-    Object.keys(localTouch).forEach(function (num) {
-      if (localTouch[num] >= scanStart) { if (feedback[num]) fresh[num] = feedback[num]; else delete fresh[num]; }
+    Object.keys(localTouch).forEach(function (k) {
+      if (localTouch[k] >= scanStart) { if (feedback[k]) fresh[k] = feedback[k]; else delete fresh[k]; }
     });
     data.feedback = fresh;
     setData(data);
@@ -1012,11 +1406,12 @@
     if (selecting) updSel();
     if (curEp) {
       var ni = indexOfId(curEp.id);
-      if (ni < 0) ni = indexOfNum(curEp.num);
+      if (ni < 0) ni = indexOfKey(keyOf(curEp));
       if (ni < 0) { showHome(false); }
       else {
         setSeq(seqCat); pos = seq.indexOf(ni);
         if (pos < 0) { setSeq(''); pos = seq.indexOf(ni); }
+        if (pos < 0) { seqCat = ''; seq = allIdxAnySrc(); pos = seq.indexOf(ni); }
         if (pos < 0) { seq = everyIdx(); pos = ni; }
         updateNav();
         var editing = document.activeElement && (document.activeElement.id === 'fbGood' || document.activeElement.id === 'fbBad');
@@ -1086,7 +1481,7 @@
   (function () {
     if (safeGet('inReader') !== '1' || !lastRead) return;
     var c = null; try { c = JSON.parse(safeGet('lastMd') || 'null'); } catch (e) {}
-    resumeLocal = { id: lastRead.id, num: lastRead.num, cat: lastRead.cat, scroll: lastRead.scroll || 0, frac: lastRead.frac, mode: lastRead.mode };
+    resumeLocal = { id: lastRead.id, num: lastRead.num, key: lastRead.key, cat: lastRead.cat, scroll: lastRead.scroll || 0, frac: lastRead.frac, mode: lastRead.mode };
     if (!c || c.id !== lastRead.id || !c.md) return;
     cache[c.id] = c.md;
     if (cachedList) return;   // 목록 저장본이 있으면 아래 start()가 바로 연다
@@ -1118,7 +1513,7 @@
     }
     var want = new URLSearchParams(location.search).get('ep');
     if (want) {
-      for (var i = 0; i < episodes.length; i++) if (String(episodes[i].num) === want) { enterInitial(i, '', null); return; }
+      for (var i = 0; i < episodes.length; i++) if (keyOf(episodes[i]) === want) { enterInitial(i, '', null); return; }
     }
     history.replaceState({ view: 'home' }, '', homeUrl());
     showHome(false);
@@ -1127,7 +1522,7 @@
   function enterInitial(i, cat, p) {
     if (history.state && history.state.view === 'ep') {
       openEpisode(i, cat, false, p);
-      history.replaceState({ view: 'ep', id: episodes[i].id, cat: seqCat }, '', epUrl(episodes[i].num));
+      history.replaceState({ view: 'ep', id: episodes[i].id, cat: seqCat }, '', epUrl(episodes[i]));
     } else {
       history.replaceState({ view: 'home' }, '', homeUrl());
       openEpisode(i, cat, true, p);
@@ -1156,8 +1551,9 @@
 
   // 테스트·디버그용 읽기 전용 상태 (드라이브 호출 없음)
   window.__reader = {
+    keys: function () { return episodes.map(keyOf); },
     state: function () {
-      return { pos: pos, seqCat: seqCat, page: page, pageCount: pageCount, cols: cols, spread: document.body.classList.contains('spread'), atEnd: atEnd, curAnchor: curAnchor, textLen: textLen,
+      return { arc: arcState(), source: curSrc(), key: pos >= 0 && episodes[seq[pos]] ? keyOf(episodes[seq[pos]]) : null, pos: pos, seqCat: seqCat, page: page, pageCount: pageCount, cols: cols, spread: document.body.classList.contains('spread'), atEnd: atEnd, curAnchor: curAnchor, textLen: textLen,
         current: pos >= 0 ? episodes[seq[pos]] && episodes[seq[pos]].num : null, lastRead: lastRead, episodes: episodes.length };
     }
   };

@@ -24,6 +24,18 @@
   var RATING_LABEL = { best: '⭐ 최고', like: '👍 좋아요', dislike: '👎 별로', '': '평가 없음' };
 
   var EPISODE_RE = /^(\d+)_(.+)\.md$/i;
+  // 출처(생성기)별 폴더: 이름으로 찾는다 (앞 번호는 무시). 그 아래 파일은 'GPT001_제목.md'처럼 글자 접두어가 붙어도 된다.
+  var SOURCE_FOLDERS = { '이후_ChatGPT': 'gpt', '이후_새_분류': 'grok' };
+  var SOURCE_LABEL = { old: '기존', gpt: 'ChatGPT', grok: '그록봇' };
+  var SOURCE_ORDER = { old: 0, gpt: 1, grok: 2 };
+  var PREFIXED_RE = /^([A-Za-z]{1,8})(\d+)_(.+)\.md$/i;
+  /** 폴더 이름에서 앞 번호('99_')를 뗀 이름: 어느 깊이에 있든 이 이름으로 제외·숨김을 판단한다 */
+  function baseName_(n) { return String(n || '').replace(/^\d+_/, ''); }
+  var EXCLUDED_BASE = EXCLUDED_FOLDERS.map(baseName_);
+  function isExcluded_(name) { return EXCLUDED_FOLDERS.indexOf(name) !== -1 || EXCLUDED_BASE.indexOf(baseName_(name)) !== -1; }
+  function sourceOf_(name) { return SOURCE_FOLDERS[baseName_(name)] || null; }
+  /** 피드백 색인 키: 기존 글은 번호 그대로('12'), 686 이후 출처별 글은 '686-grok'처럼 출처를 붙인다 */
+  function fbKey_(ep) { return ep.key || String(ep.num); }
   var FOLDER_MIME = 'application/vnd.google-apps.folder';
   var LIST_CONCURRENCY = 6;
 
@@ -71,7 +83,7 @@
               listings[id] = files;
               files.forEach(function (f) {
                 if (f.mimeType !== FOLDER_MIME) return;
-                if (EXCLUDED_FOLDERS.indexOf(f.name) === -1) schedule(f.id);
+                if (!isExcluded_(f.name)) schedule(f.id);
                 else if (id === ROOT_FOLDER_ID && f.name === FEEDBACK_FOLDER_NAME && !fbPromise) {
                   fbFolderId = f.id;
                   fbPromise = loadFeedbackFolder(f.id);   // 목록 훑는 동안 함께 받아 둔다
@@ -87,52 +99,90 @@
 
     return crawl.then(function () {
       if (!fbPromise) { fbFolderId = null; fbPromise = Promise.resolve({ index: { version: 1, items: {} }, cand: null, state: null }); }
-      var byNumber = {};
+      var byNumber = {};   // 같은 출처 안에서만 같은 번호를 하나로 합친다 (키: 기존 '12', 출처별 '686-grok')
       var cats = {};
-      var queue = [{ id: ROOT_FOLDER_ID, key: '', name: '' }];
+      var queue = [{ id: ROOT_FOLDER_ID, key: '', name: '', src: 'old', srcRoot: false }];
       var seen = {};
+      var archive = [];    // 목록에서 빠진 폴더 (보관 폴더에서 따로 본다)
       while (queue.length) {
         var folder = queue.shift();
         if (seen[folder.id]) continue;
         seen[folder.id] = true;
         (listings[folder.id] || []).forEach(function (f) {
           if (f.mimeType === FOLDER_MIME) {
-            if (EXCLUDED_FOLDERS.indexOf(f.name) === -1) {
-              queue.push({ id: f.id, key: (folder.key ? folder.key + '/' : '') + f.name, name: f.name });
+            if (!isExcluded_(f.name)) {
+              var fs = sourceOf_(f.name);
+              queue.push({ id: f.id, key: (folder.key ? folder.key + '/' : '') + f.name, name: f.name,
+                src: fs || folder.src, srcRoot: !!fs });
+            } else {
+              var top = folder.id === ROOT_FOLDER_ID;
+              archive.push({ id: f.id, name: f.name, top: top, path: (folder.key ? folder.key + '/' : '') + f.name,
+                label: (cleanCategory_(f.name) || f.name) + (top ? '' : ' · ' + (folder.srcRoot ? SOURCE_LABEL[folder.src] : (cleanCategory_(folder.name) || folder.name))) });
             }
             return;
           }
-          var m = EPISODE_RE.exec(f.name);
-          if (!m) return;
-          var num = parseInt(m[1], 10);
+          var src = folder.src;
+          var m = EPISODE_RE.exec(f.name), num, rawTitle;
+          if (m) { num = parseInt(m[1], 10); rawTitle = m[2]; }
+          else if (src !== 'old' && (m = PREFIXED_RE.exec(f.name))) { num = parseInt(m[2], 10); rawTitle = m[3]; }
+          else return;
           if (num < MIN_EPISODE_NUMBER) return;
           var catKey = folder.key || '(기타)';
-          if (!cats[catKey]) cats[catKey] = { key: catKey, name: cleanCategory_(folder.name) || '기타' };
+          if (!cats[catKey]) {
+            cats[catKey] = { key: catKey, name: folder.srcRoot ? SOURCE_LABEL[src] : (cleanCategory_(folder.name) || '기타') };
+            if (src !== 'old') cats[catKey].src = src;
+          }
 
-          var prev = byNumber[num];
+          var key = src === 'old' ? String(num) : num + '-' + src;
+          var prev = byNumber[key];
           if (!prev) {
-            byNumber[num] = { id: f.id, ids: [f.id], num: num, title: cleanTitle_(m[2]), modified: f.modifiedTime, cats: [catKey] };
+            byNumber[key] = { id: f.id, ids: [f.id], num: num, title: cleanTitle_(rawTitle), modified: f.modifiedTime, cats: [catKey] };
+            if (src !== 'old') { byNumber[key].src = src; byNumber[key].key = key; }
             return;
           }
           if (prev.ids.indexOf(f.id) === -1) prev.ids.push(f.id);
           if (prev.cats.indexOf(catKey) === -1) prev.cats.push(catKey);
           if (f.modifiedTime > prev.modified) {
-            prev.id = f.id; prev.title = cleanTitle_(m[2]); prev.modified = f.modifiedTime;
+            prev.id = f.id; prev.title = cleanTitle_(rawTitle); prev.modified = f.modifiedTime;
           }
         });
       }
       var episodes = Object.keys(byNumber).map(function (k) { return byNumber[k]; })
-        .sort(function (a, b) { return a.num - b.num; });
+        .sort(function (a, b) { return a.num - b.num || SOURCE_ORDER[a.src || 'old'] - SOURCE_ORDER[b.src || 'old']; });
       var categories = Object.keys(cats).sort().map(function (k) { return cats[k]; });
+      archive.sort(function (a, b) { return (b.top - a.top) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0); });
       return fbPromise.then(function (fb) {
         var cand = fb.cand || {};
+        var mapped = mapLegacyFeedback_(fb.index.items, episodes);
         return {
-          episodes: episodes, categories: categories, feedback: fb.index.items,
+          episodes: episodes, categories: categories, feedback: mapped.feedback,
           candidates: cand.candidates || {}, keepNovel: cand.keepNovel || {},
-          hiddenFolders: DEFAULT_HIDDEN_FOLDERS, state: fb.state
+          hiddenFolders: DEFAULT_HIDDEN_FOLDERS, state: fb.state,
+          legacyFb: mapped.legacy, archive: archive
         };
       });
     });
+  }
+
+  /**
+   * 예전 색인은 번호만 키로 썼다('686'). 그 번호가 기존 글에 없고 출처별 글에만 있으면,
+   * 항목의 파일 ID가 맞는 글(없으면 그 번호의 유일한 글)에 붙인다. 색인 파일은 저장할 때까지 그대로 둔다.
+   */
+  function mapLegacyFeedback_(items, episodes) {
+    var feedback = {}, legacy = {}, byNum = {};
+    Object.keys(items).forEach(function (k) { feedback[k] = items[k]; });
+    episodes.forEach(function (e) { (byNum[e.num] = byNum[e.num] || []).push(e); });
+    Object.keys(items).forEach(function (k) {
+      if (!/^\d+$/.test(k)) return;
+      var list = byNum[k];
+      if (!list || list.some(function (e) { return !e.src; })) return;   // 기존 글이 있으면 그 글의 것
+      var it = items[k] || {}, ids = it.ids || [];
+      var hit = list.filter(function (e) { return ids.some(function (id) { return e.ids.indexOf(id) !== -1; }); });
+      var target = hit.length === 1 ? hit[0] : (!hit.length && list.length === 1 ? list[0] : null);
+      if (!target || feedback[target.key]) return;
+      feedback[target.key] = it; delete feedback[k]; legacy[target.key] = k;
+    });
+    return { feedback: feedback, legacy: legacy };
   }
 
   function firstByName(files, name) {
@@ -186,9 +236,9 @@
         var out = {};
         // 원본 파일 쓰기는 동시에 몇 편씩, 색인 반영 순서는 원래대로 앞에서부터
         return pool(eps, 4, function (ep) {
-          var cur = idx.items[ep.num] || {};
+          var cur = idx.items[fbKey_(ep)] || (ep.legacyKey && idx.items[ep.legacyKey]) || {};
           return applyItem_(idx, ep, { rating: cur.rating || '', good: cur.good || '', bad: cur.bad || '', kind: kind })
-            .then(function (item) { out[ep.num] = item; });
+            .then(function (item) { out[fbKey_(ep)] = item; });
         }).then(function () {
           return writeIndex_(idx).then(function () { return writeSummary_(idx); });
         }).then(function () { return { ok: true, items: out }; });
@@ -225,12 +275,15 @@
         });
       });
     })).then(function () {
-      if (empty) { delete idx.items[ep.num]; return null; }
-      idx.items[ep.num] = {
+      var key = fbKey_(ep);
+      if (ep.legacyKey && ep.legacyKey !== key) delete idx.items[ep.legacyKey];   // 예전 번호 키는 출처 키로 옮긴다
+      if (empty) { delete idx.items[key]; return null; }
+      idx.items[key] = {
         num: ep.num, title: ep.title, ids: ep.ids, cats: ep.catNames || [],
         rating: rating, good: good, bad: bad, kind: kind, updated: stamp
       };
-      return idx.items[ep.num];
+      if (ep.src && ep.src !== 'old') idx.items[key].src = ep.src;
+      return idx.items[key];
     });
   }
 
@@ -342,11 +395,13 @@
 
   function buildSummary_(idx) {
     var all = Object.keys(idx.items).map(function (k) { return idx.items[k]; });
-    var notNovel = all.filter(function (x) { return x.kind === 'notnovel'; }).sort(function (a, b) { return a.num - b.num; });
+    var bySrc = function (a, b) { return a.num - b.num || (SOURCE_ORDER[a.src || 'old'] || 0) - (SOURCE_ORDER[b.src || 'old'] || 0); };
+    var srcTag = function (x) { return x.src && SOURCE_LABEL[x.src] && x.src !== 'old' ? ' (' + SOURCE_LABEL[x.src] + ')' : ''; };
+    var notNovel = all.filter(function (x) { return x.kind === 'notnovel'; }).sort(bySrc);
     var items = all.filter(function (x) { return x.kind !== 'notnovel' && (x.rating || x.good || x.bad); });
     var byRating = function (r) {
       return items.filter(function (x) { return x.rating === r; })
-        .sort(function (a, b) { return a.num - b.num; });
+        .sort(bySrc);
     };
     var stamp = stamp_();
     var out = [
@@ -369,7 +424,7 @@
       out.push('## ' + g[1] + ' (' + list.length + '편)', '');
       list.forEach(function (x) {
         var cat = x.cats && x.cats.length ? ' · ' + x.cats.join(', ') : '';
-        out.push('### ' + pad3_(x.num) + '. ' + x.title, '');
+        out.push('### ' + pad3_(x.num) + '. ' + x.title + srcTag(x), '');
         out.push('- 분류' + (cat ? ':' + cat.slice(2) : ': -'));
         out.push('- 기록: ' + x.updated);
         if (x.good) out.push('- 좋았던 점: ' + oneBlock_(x.good));
@@ -379,7 +434,7 @@
     });
     if (notNovel.length) {
       out.push('## 소설 아님으로 표시한 글 (' + notNovel.length + '편)', '');
-      notNovel.forEach(function (x) { out.push('- ' + pad3_(x.num) + '. ' + x.title); });
+      notNovel.forEach(function (x) { out.push('- ' + pad3_(x.num) + '. ' + x.title + srcTag(x)); });
       out.push('');
     }
     return out.join('\n');
@@ -391,6 +446,24 @@
     return t.replace(/\r/g, '').split('\n').join('\n  ');
   }
   function pad3_(n) { return ('00' + n).slice(-3); }
+
+  // ---------- 보관 폴더 (읽기 전용: 목록·내려받기만, 쓰기 없음) ----------
+  var ARCHIVE_FIELDS = 'id, name, mimeType, modifiedTime, size';
+  function listArchiveFolder(id) {
+    return D.list("'" + esc(id) + "' in parents and trashed = false", ARCHIVE_FIELDS).then(function (files) {
+      var coll = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' });
+      return files.slice().sort(function (a, b) {
+        var fa = a.mimeType === FOLDER_MIME, fb2 = b.mimeType === FOLDER_MIME;
+        if (fa !== fb2) return fa ? -1 : 1;
+        return coll.compare(a.name, b.name);
+      });
+    });
+  }
+  /** 보관 폴더의 파일 내용: 구글 문서는 일반 텍스트로 내보내고, 나머지는 그대로 받는다. */
+  function getArchiveContent(file) {
+    if (file.mimeType === 'application/vnd.google-apps.document') return D.exportText(file.id, 'text/plain');
+    return D.download(file.id);
+  }
 
   function cleanTitle_(raw) {
     var t = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
@@ -405,6 +478,8 @@
   var api = {
     BLOCK_START: BLOCK_START, BLOCK_END: BLOCK_END, ROOT_FOLDER_ID: ROOT_FOLDER_ID,
     getEpisodes: getEpisodes, getEpisodeContent: getEpisodeContent,
+    listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent,
+    SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_,
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,
     stamp: stamp_, buildBlock: buildBlock_, replaceBlock: replaceBlock_, buildSummary: buildSummary_,
     hasStateFile: function () { return !!stateFile; },

@@ -266,3 +266,55 @@ body.paged.spread.atEnd #after > .nav { max-width: 760px; width: 100%; justify-s
 #rowHideBar { flex-wrap: wrap; }
 #rowHideBar .sl { width: 100%; }
 #hideBarHint { margin-top: 2px; }
+
+/* 만든 곳(출처) 탭 */
+.srctabs { display: flex; gap: 0; margin: 2px 0 8px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+.srctabs[hidden] { display: none; }
+.stab { flex: 1 1 0; min-width: 0; border: 0; border-radius: 0; border-right: 1px solid var(--line); padding: 7px 4px; font-size: 13px; line-height: 1.25;
+  display: flex; flex-direction: column; align-items: center; gap: 1px; background: transparent; }
+.stab:last-child { border-right: 0; }
+.stab .sl2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stab .sn { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.stab.on { background: var(--accent); color: #fff; }
+.stab.on .sn { color: inherit; opacity: .85; }
+html[data-theme="dark"] .stab.on, html[data-theme="black"] .stab.on { color: #16141a; }
+.srcb { display: inline-block; font-size: 10px; line-height: 1; padding: 3px 5px; border-radius: 6px; vertical-align: 2px; font-weight: 600;
+  border: 1px solid currentColor; opacity: .8; white-space: nowrap; }
+.srcb-gpt { color: #2f8f6b; }
+.srcb-grok { color: #4a6fd1; }
+html[data-theme="dark"] .srcb-gpt, html[data-theme="black"] .srcb-gpt { color: #6fd0a8; }
+html[data-theme="dark"] .srcb-grok, html[data-theme="black"] .srcb-grok { color: #93acf2; }
+ul.list li > .srcb { margin: 2px 6px 0 -4px; flex: none; }
+.chip .srcb { margin-left: 2px; }
+/* 보관 폴더 */
+.arcentry { margin: 28px 0 8px; border-top: 1px solid var(--line); color: var(--muted); }
+.arcentry summary { cursor: pointer; padding: 14px 2px; list-style: none; display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+.arcentry summary::-webkit-details-marker { display: none; }
+.arcentry summary::before { content: "▸"; transition: transform .15s; }
+.arcentry[open] summary::before { transform: rotate(90deg); }
+.arcentry summary small { font-size: 12px; opacity: .8; }
+ul.arclist { list-style: none; margin: 0; padding: 0; }
+ul.arclist li { display: flex; align-items: center; gap: 10px; padding: 11px 4px; border-bottom: 1px solid var(--line); cursor: pointer; color: var(--fg); }
+ul.arclist .ai { flex: none; width: 1.4em; text-align: center; }
+ul.arclist .t { flex: 1; min-width: 0; }
+ul.arclist .an { display: block; overflow-wrap: anywhere; }
+ul.arclist .ao { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+ul.arclist .ac { flex: none; color: var(--muted); font-size: 12px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0 4px; font-size: 13px; }
+.crumbs .crumb { padding: 4px 8px; font-size: 13px; border-radius: 8px; }
+.crumbs .crumb:disabled { opacity: 1; color: var(--fg); background: transparent; border-color: transparent; font-weight: 600; }
+.crumbs .sep { color: var(--muted); }
+.arcro { color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
+#article pre.mono, #article pre.plain { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; margin: 0; text-indent: 0; }
+#article pre.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK KR", monospace; font-size: calc(var(--fs) * .78); line-height: 1.55; }
+#article pre.plain { font-family: var(--font); font-size: var(--fs); line-height: var(--lh); }
+.arcinfo { padding: 18px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); margin-top: 18px; text-indent: 0; text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; font-size: 15px; line-height: 1.6; break-inside: avoid; }
+.arcinfo h2 { font-size: 17px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.arcinfo dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; }
+.arcinfo dt { color: var(--muted); }
+.arcinfo dd { margin: 0; overflow-wrap: anywhere; }
+.arcinfo .note { color: var(--muted); margin: 0 0 12px; }
+.arcinfo .bigopen { display: block; margin: 0 0 12px; }
+.arcinfo .drivelink { color: var(--accent); }
+.arcnote { color: var(--muted); font-size: 13px; text-indent: 0; }
