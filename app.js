@@ -21,10 +21,23 @@
   var legacyFb = {};        // 출처 키 -> 예전 번호 키 (예전 색인 항목을 이어받은 경우)
   var archiveRoots = [];    // 목록에서 빠진 폴더들 (보관 폴더)
   var numCount = {};        // 번호 -> 그 번호의 글 수 (출처가 다르면 같은 번호가 여럿)
-  // 출처(생성기) 구분: 기존(~685) / ChatGPT / 그록봇
-  var SOURCES = [['all', '전체'], ['old', '기존 (~685)'], ['gpt', 'ChatGPT'], ['grok', '그록봇']];
-  var SRC_BADGE = { gpt: 'GPT', grok: '그록' };
-  var SRC_LABEL = { old: '기존', gpt: 'ChatGPT', grok: '그록봇' };
+  // 작가별 구분: 기존(~685) + 드라이브에서 찾은 작가 폴더들 (ChatGPT, 그록봇, …)
+  var sourceList = [];      // [{id, label, badge, folder}] 폴더 이름순
+  var srcMap = {};
+  function srcLabel(id) { return id === 'old' ? '기존' : (srcMap[id] ? srcMap[id].label : id); }
+  function badgeOf(id) { return srcMap[id] ? srcMap[id].badge : id; }
+  /** 예전 저장본(작가 목록 없음)에서도 글·분류의 작가로 목록을 만든다 */
+  function deriveSources(data) {
+    var seen = {}, out = [];
+    var fallback = { gpt: ['ChatGPT', 'GPT'], grok: ['그록봇', '그록'] };
+    (data.episodes || []).concat(data.categories || []).forEach(function (x) {
+      if (!x.src || seen[x.src]) return;
+      seen[x.src] = true;
+      var f = fallback[x.src] || [x.src, x.src.slice(0, 6)];
+      out.push({ id: x.src, label: f[0], badge: f[1], folder: x.src });
+    });
+    return out;
+  }
   var BS = '<!-- 재독피드백:시작', BE = '<!-- 재독피드백:끝 -->';
   var FEEDBACK_MAX = Infinity; // 모든 편에 재독 피드백 칸 표시
   var LS = window.localStorage;
@@ -78,7 +91,11 @@
   function srcOf(ep) { return ep.src || 'old'; }
   function keyOf(ep) { return ep.key || String(ep.num); }
   var sourcesPresent = false;
-  function curSrc() { return sourcesPresent ? (Settings.get().source || 'all') : 'all'; }
+  function curSrc() {
+    var v = Settings.get().source || 'all';
+    if (!sourcesPresent) return 'all';
+    return v === 'all' || v === 'old' || srcMap[v] ? v : 'all';
+  }
   function srcOk(i) { var c = curSrc(); return c === 'all' || srcOf(episodes[i]) === c; }
   function catSrcOk(c) { var cs = curSrc(); return cs === 'all' || (c.src || 'old') === cs; }
   function hasSources() { return sourcesPresent; }
@@ -129,7 +146,9 @@
   function allIdx() { return srcIdx().filter(function (i) { return !isHidden(i); }); }
   function allIdxAnySrc() { return everyIdx().filter(function (i) { return !isHidden(i); }); }
   function srcBadge(src) {
-    var b = document.createElement('span'); b.className = 'srcb srcb-' + src; b.textContent = SRC_BADGE[src]; return b;
+    var b = document.createElement('span');
+    b.className = 'srcb ' + (src === 'gpt' || src === 'grok' ? 'srcb-' + src : 'srcb-other');
+    b.setAttribute('data-src', src); b.textContent = badgeOf(src); return b;
   }
   var MARK = { best: '⭐', like: '👍', dislike: '👎' };
 
@@ -177,7 +196,8 @@
     box.hidden = !hasSources();
     if (box.hidden) return;
     var cur = curSrc();
-    SOURCES.forEach(function (o) {
+    var tabs = [['all', '전체'], ['old', '기존 (~685)']].concat(sourceList.map(function (a) { return [a.id, a.label]; }));
+    tabs.forEach(function (o) {
       var b = document.createElement('button');
       b.className = 'stab' + (cur === o[0] ? ' on' : '');
       b.setAttribute('data-src', o[0]); b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', cur === o[0] ? 'true' : 'false');
@@ -219,13 +239,13 @@
     if ($('arcEntry').open && !arcRootsDrawn && archiveRoots.length) drawArcRoots();
     renderSources();
     renderChips();
-    var sp = curSrc() === 'all' ? '' : SRC_LABEL[curSrc()] + ' · ';
+    var sp = curSrc() === 'all' ? '' : srcLabel(curSrc()) + ' · ';
 
     if (q) {
       var pool = srcIdx();   // 검색도 고른 출처 안에서
       var hits = pool.filter(function (i) {
         var ep = episodes[i];
-        return (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' ') + (ep.src ? ' ' + SRC_LABEL[ep.src] + ' ' + SRC_BADGE[ep.src] : ''))
+        return (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' ') + (ep.src ? ' ' + srcLabel(ep.src) + ' ' + badgeOf(ep.src) : ''))
           .toLowerCase().indexOf(q) !== -1;
       });
       hits.forEach(function (i) { ul.appendChild(itemLi(i, null)); });
@@ -272,7 +292,7 @@
 
     var list = inCat(view);
     list.forEach(function (i) { ul.appendChild(itemLi(i, view)); });
-    $('count').textContent = (realCat && realCat.src && !sp ? SRC_LABEL[realCat.src] + ' · ' : sp) + catName[view] + ' · ' + list.length + '편';
+    $('count').textContent = (realCat && realCat.src && !sp ? srcLabel(realCat.src) + ' · ' : sp) + catName[view] + ' · ' + list.length + '편';
   }
   function hiddenNote() {
     var d = inCat('@dislike').length, n = inCat('@notnovel').length, parts = [];
@@ -342,7 +362,7 @@
     var idx = findLast(lastRead);
     if (idx < 0) return;
     var cat = lastRead.cat && episodes[idx].cats.indexOf(lastRead.cat) !== -1 ? lastRead.cat : '';
-    var re = episodes[idx], rs = re.src ? SRC_LABEL[re.src] : '';
+    var re = episodes[idx], rs = re.src ? srcLabel(re.src) : '';
     var rp = [rs, cat ? catName[cat] : ''].filter(Boolean).join(' · ');
     $('resumeTitle').textContent = re.num + '. ' + re.title + (rp ? '  (' + rp + ')' : '');
     $('resume').style.display = 'block';
@@ -402,7 +422,7 @@
   }
   function updateNav() {
     var ce = episodes[seq[pos]];
-    var sp = ce && ce.src ? SRC_LABEL[ce.src] + ' · ' : '';
+    var sp = ce && ce.src ? srcLabel(ce.src) + ' · ' : '';
     $('where').textContent = sp + (seqCat ? catName[seqCat] : '전체') + ' · ' + (pos + 1) + ' / ' + seq.length;
     ['prevTop', 'prevBottom', 'pbPrev'].forEach(function (b) { $(b).disabled = pos === 0; });
     ['nextTop', 'nextBottom', 'pbNext'].forEach(function (b) { $(b).disabled = pos === seq.length - 1; });
@@ -1355,7 +1375,7 @@
     clearTimeout(listTimer);
     listTimer = setTimeout(function () {
       var data = { v: 1, at: Date.now(), episodes: episodes, categories: categories, feedback: feedback,
-        candidates: candidates, keepNovel: keepNovel, hiddenFolders: hiddenFolders, legacyFb: legacyFb, archive: archiveRoots };
+        candidates: candidates, keepNovel: keepNovel, hiddenFolders: hiddenFolders, legacyFb: legacyFb, archive: archiveRoots, sources: sourceList };
       var s = JSON.stringify(data);
       try { LS.setItem('listCache', s); } catch (e) { try { LS.removeItem('listCache'); } catch (e2) {} }
       idb.put('listCache', data);
@@ -1380,12 +1400,14 @@
     numCount = {};
     episodes.forEach(function (e) { numCount[e.num] = (numCount[e.num] || 0) + 1; });
     arcRootsDrawn = false;
-    sourcesPresent = episodes.some(function (e) { return !!e.src; }) || categories.some(function (c) { return !!c.src; });
+    sourceList = (data && data.sources) || deriveSources(data || {});
+    srcMap = {}; sourceList.forEach(function (a) { srcMap[a.id] = a; });
+    sourcesPresent = sourceList.length > 0 || episodes.some(function (e) { return !!e.src; });
     $('homeStatus').style.display = episodes.length ? 'none' : 'block';
     if (!episodes.length) $('homeStatus').textContent = '에피소드 파일을 찾지 못했어요.';
   }
   function signature() {
-    return JSON.stringify([episodes.map(function (e) { return [e.id, e.num, e.title, e.cats, e.src]; }), categories, feedback, candidates, keepNovel, hiddenFolders, archiveRoots]);
+    return JSON.stringify([episodes.map(function (e) { return [e.id, e.num, e.title, e.cats, e.src]; }), categories, feedback, candidates, keepNovel, hiddenFolders, archiveRoots, sourceList]);
   }
   /** 백그라운드로 받은 새 목록 반영: 읽던 화·선택·입력 중인 피드백은 그대로 둔다. */
   function applyFresh(data, scanStart) {

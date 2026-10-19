@@ -282,8 +282,10 @@ html[data-theme="dark"] .stab.on, html[data-theme="black"] .stab.on { color: #16
   border: 1px solid currentColor; opacity: .8; white-space: nowrap; }
 .srcb-gpt { color: #2f8f6b; }
 .srcb-grok { color: #4a6fd1; }
+.srcb-other { color: #b0602a; }
 html[data-theme="dark"] .srcb-gpt, html[data-theme="black"] .srcb-gpt { color: #6fd0a8; }
 html[data-theme="dark"] .srcb-grok, html[data-theme="black"] .srcb-grok { color: #93acf2; }
+html[data-theme="dark"] .srcb-other, html[data-theme="black"] .srcb-other { color: #f0a46c; }
 ul.list li > .srcb { margin: 2px 6px 0 -4px; flex: none; }
 .chip .srcb { margin-left: 2px; }
 /* 보관 폴더 */

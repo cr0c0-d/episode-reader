@@ -131,7 +131,7 @@
     if (!FONTS[s.font] && !customMetaById(s.font)) s.font = 'system';
     if (['auto', 'on', 'off'].indexOf(s.spread) === -1) s.spread = 'auto';
     if (typeof s.hideBar !== 'boolean') s.hideBar = true;
-    if (['all', 'old', 'gpt', 'grok'].indexOf(s.source) === -1) s.source = 'all';
+    if (typeof s.source !== 'string' || !s.source) s.source = 'all';   // 작가 ID (목록을 받은 뒤 없으면 전체로 본다)
     if (!THEME_COLOR[s.theme]) s.theme = 'light';
     if (s.mode !== 'page') s.mode = 'scroll';
     Object.keys(LIMITS).forEach(function (k) { s[k] = clamp(k, Number(s[k])); });
