@@ -15,7 +15,7 @@
   var lastRead = null;
   var cache = {};
   var feedback = {};        // 번호 -> {rating, good, bad, updated}
-  var VIRTUAL = [['@best', '⭐ 최고'], ['@unrated', '아직 평가 안 함'], ['@dislike', '👎 별로'],
+  var VIRTUAL = [['@best', '⭐ 최고'], ['@unrated', '아직 평가 안 함'], ['@meh', '😐 평범'], ['@dislike', '👎 별로'],
     ['@candidate', '소설 아님 후보'], ['@notnovel', '소설 아님']];
   var candidates = {}, keepNovel = {}, hiddenFolders = [];
   var legacyFb = {};        // 출처 키 -> 예전 번호 키 (예전 색인 항목을 이어받은 경우)
@@ -133,6 +133,7 @@
       var ok, nn = isNotNovel(i);
       if (key === '@best') ok = !nn && rating(i) === 'best';
       else if (key === '@unrated') ok = !nn && ep.num <= FEEDBACK_MAX && !hasReview(i);
+      else if (key === '@meh') ok = !nn && rating(i) === 'meh';
       else if (key === '@dislike') ok = !nn && rating(i) === 'dislike';
       else if (key === '@candidate') ok = isCandidate(i);
       else if (key === '@notnovel') ok = nn;
@@ -150,7 +151,7 @@
     b.className = 'srcb ' + (src === 'gpt' || src === 'grok' ? 'srcb-' + src : 'srcb-other');
     b.setAttribute('data-src', src); b.textContent = badgeOf(src); return b;
   }
-  var MARK = { best: '⭐', like: '👍', dislike: '👎' };
+  var MARK = { best: '⭐', like: '👍', meh: '😐', dislike: '👎' };
 
   // ---------- 목록 ----------
   function itemLi(i, cat) {

@@ -78,9 +78,10 @@ details.meta summary { cursor: pointer; padding: 12px 0; color: var(--muted); fo
 .fb { margin: 28px 0 0; padding: 16px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
 .fb h3 { margin: 0 0 12px; font-size: 16px; }
 .rates { display: flex; gap: 8px; margin-bottom: 14px; }
-.rates button { flex: 1; padding: 10px 4px; }
+.rates button { flex: 1; min-width: 0; padding: 10px 2px; white-space: nowrap; }
 .rates button.on[data-r="best"] { background: #c9932e; border-color: #c9932e; color: #fff; }
 .rates button.on[data-r="like"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rates button.on[data-r="meh"] { background: #8a8f6a; border-color: #8a8f6a; color: #fff; }
 .rates button.on[data-r="dislike"] { background: #6b6475; border-color: #6b6475; color: #fff; }
 .fb label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 6px; }
 .fb textarea { width: 100%; min-height: 84px; resize: vertical; font: inherit; font-size: 16px; line-height: 1.6;
