@@ -1568,7 +1568,41 @@
 
   // ---------- 서비스 워커 (앱 껍데기 캐시) ----------
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js', { scope: './' }).catch(function () {}); });
+    // 새 버전: sw.js는 HTTP 캐시를 거치지 않고 확인하고(updateViaCache 'none'), 앱을 다시 볼 때마다 업데이트를 확인한다.
+    // 새 서비스 워커가 페이지를 넘겨받으면(skipWaiting + clients.claim) 입력·저장 중이 아닐 때 바로 새로고침하고,
+    // 그렇지 않으면 '새 버전' 막대를 띄워 직접 누르게 한다. 지금 떠 있는 예전 코드가 계속 저장하지 않게 하려는 것.
+    var swReg = null, hadController = !!navigator.serviceWorker.controller, swReloading = false;
+    function swBusy() {
+      var a = document.activeElement;
+      return fbDirty || fbSaving || fbQueued || !!(a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT'));
+    }
+    function swReloadNow() { if (swReloading) return; swReloading = true; try { flushFeedback(); } catch (e) {} location.reload(); }
+    function swShowUpdate() {
+      var bar = $('updBar');
+      if (!bar) {
+        bar = document.createElement('div'); bar.id = 'updBar'; bar.className = 'updbar';
+        bar.innerHTML = '<span>새 버전이 있어요.</span> <button id="updBtn">새로고침</button>';
+        document.body.appendChild(bar);
+        $('updBtn').onclick = function () { if (fbDirty || fbSaving || fbQueued) { flushFeedback(); setTimeout(swReloadNow, 1500); } else swReloadNow(); };
+      }
+      bar.hidden = false;
+    }
+    function swCheck() { if (swReg) swReg.update().catch(function () {}); }
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController) { hadController = true; return; }   // 처음 설치: 이미 최신 코드
+      window.__reader.updateReady = true;
+      if (document.visibilityState === 'hidden' || !swBusy()) swReloadNow(); else swShowUpdate();
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      if (window.__reader.updateReady && !swBusy()) swReloadNow(); else swCheck();
+    });
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' }).then(function (r) {
+        swReg = r; window.__reader.swReg = r; swCheck();
+      }).catch(function () {});
+    });
+    setInterval(function () { if (document.visibilityState === 'visible') swCheck(); }, 30 * 60 * 1000);
   }
 
   // 테스트·디버그용 읽기 전용 상태 (드라이브 호출 없음)

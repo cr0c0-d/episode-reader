@@ -185,6 +185,11 @@ body.paged.atEnd .pagebar { display: none; }
 html[data-theme="dark"] .authbar button, html[data-theme="black"] .authbar button { color: #16141a; }
 .authbar span { font-size: 12px; color: var(--muted); padding-right: 8px; }
 .authbar span:empty { display: none; }
+.updbar { position: fixed; z-index: 42; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 8px);
+  display: flex; align-items: center; gap: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 6px 4px 14px; box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 13px; max-width: calc(100vw - 24px); }
+.updbar[hidden] { display: none; }
+.updbar button { border-radius: 999px; padding: 6px 14px; min-height: 36px; font-size: 14px; background: var(--accent); color: #fff; border-color: var(--accent); }
 .toast { position: fixed; z-index: 41; left: 50%; transform: translateX(-50%); bottom: calc(var(--sab) + 110px);
   background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; max-width: calc(100vw - 32px); }
 

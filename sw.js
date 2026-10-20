@@ -1,5 +1,5 @@
 /* 앱 껍데기 캐시. 구글 API(드라이브·로그인) 응답은 절대 캐시하지 않는다. */
-var VERSION = 'v10';
+var VERSION = 'v11';
 var SHELL_CACHE = 'reader-shell-' + VERSION;
 var CDN_CACHE = 'reader-cdn-v1';     // 버전 고정 라이브러리·웹 글꼴
 var SHELL = [
@@ -14,7 +14,8 @@ var CDN = [
 
 self.addEventListener('install', function (e) {
   e.waitUntil(Promise.all([
-    caches.open(SHELL_CACHE).then(function (c) { return c.addAll(SHELL); }),
+    // HTTP 캐시(깃허브 페이지 10분)를 거치지 않고 새로 받아야 새 버전 캐시에 예전 파일이 섞이지 않는다
+    caches.open(SHELL_CACHE).then(function (c) { return c.addAll(SHELL.map(function (u) { return new Request(u, { cache: 'reload' }); })); }),
     caches.open(CDN_CACHE).then(function (c) {
       return Promise.all(CDN.map(function (u) {
         return c.match(u).then(function (hit) { return hit || c.add(new Request(u, { mode: 'cors' })); });
@@ -82,3 +83,5 @@ self.addEventListener('fetch', function (e) {
     });
   }));
 });
+
+self.addEventListener('message', function (e) { if (e.data === 'SKIP_WAITING') self.skipWaiting(); });

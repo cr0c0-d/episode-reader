@@ -222,6 +222,7 @@
     return listChildren(folderId).then(function (files) {
       var fi = firstByName(files, FEEDBACK_INDEX_NAME), fc = firstByName(files, CANDIDATES_NAME), fs = firstByName(files, STATE_NAME);
       if (fs) stateFile = fs;   // 숨김 전환 때 요청 한 번으로 저장할 수 있게 기억
+      healUnapplied_(files, fi);
       return Promise.all([
         fi ? D.download(fi.id).then(parseIndex_) : { version: 1, items: {} },
         fc ? D.download(fc.id).then(parseJson_, function () { return null; }) : null,
@@ -543,14 +544,59 @@
     });
     return out.join('\n');
   }
+  // 미반영 파일은 한 번 찾은 ID를 계속 쓴다. 같은 이름이 여러 개면 기억한 ID → 가장 먼저 만든 파일 순으로 고른다(새로 만들지 않음).
+  var unappliedFile = null;
+  function pickUnapplied_(list) {
+    var same = (list || []).filter(function (f) { return f.name === UNAPPLIED_NAME && f.mimeType !== FOLDER_MIME; });
+    if (!same.length) return null;
+    if (unappliedFile) for (var i = 0; i < same.length; i++) if (same[i].id === unappliedFile.id) return same[i];
+    same.sort(function (a, b) {
+      var ca = a.createdTime || '', cb = b.createdTime || '';
+      return ca < cb ? -1 : ca > cb ? 1 : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    });
+    return same[0];
+  }
+  function findUnapplied_() {
+    return findFolder_(false).then(function (folder) {
+      if (!folder) return null;
+      return D.list("'" + esc(folder) + "' in parents and name = '" + esc(UNAPPLIED_NAME) + "' and mimeType != '" + FOLDER_MIME + "' and trashed = false", 'id, name, mimeType, createdTime, modifiedTime')
+        .then(pickUnapplied_, function (e) {
+          if (e && e.status === 404) { fbFolderId = null; return findUnapplied_(); }
+          throw e;
+        });
+    });
+  }
+  /**
+   * 목록을 불러올 때: 색인이 미반영 파일보다 나중에 바뀌었거나(예전 버전 앱·다른 기기에서 저장) 미반영 파일이 없으면
+   * 뒤에서 미반영 파일만 다시 만든다. 목록 표시는 기다리지 않고, 실패해도 다음 저장 때 다시 쓴다.
+   */
+  var healing = null;
+  function healUnapplied_(files, fi) {
+    if (!fi || healing) return;
+    var uf = pickUnapplied_(files);
+    if (uf && uf.modifiedTime && fi.modifiedTime && uf.modifiedTime >= fi.modifiedTime) return;
+    healing = withLock_(function () {
+      return readIndex_().then(function (idx) { return writeUnapplied_(idx); });
+    }).then(function () { if (api.onUnappliedHealed) try { api.onUnappliedHealed(); } catch (e) {} }, function (e) {
+      if (global.console) console.warn('미반영_피드백.md 갱신 실패', e);
+    }).then(function () { healing = null; });
+  }
   function readAppliedLog_() {
     return findFile_(APPLIED_LOG_NAME).then(function (f) {
       if (!f) return '';
       return D.download(f.id).then(function (t) { return t || ''; });
     });
   }
+  /** 항상 같은 파일 ID를 덮어쓴다. 없을 때만 새로 만든다. */
   function writeUnapplied_(idx) {
-    return readAppliedLog_().then(function (log) { return writeFile_(UNAPPLIED_NAME, buildUnapplied_(idx, log)); });
+    return readAppliedLog_().then(function (log) {
+      var text = buildUnapplied_(idx, log);
+      return findUnapplied_().then(function (f) {
+        if (f) return D.update(f.id, text, f.mimeType || 'text/markdown').then(function () { unappliedFile = f; return f; });
+        return findFolder_(true).then(function (folder) { return D.create(UNAPPLIED_NAME, folder, text, 'text/markdown'); })
+          .then(function (nf) { unappliedFile = nf; return nf; });
+      });
+    });
   }
 
   function oneBlock_(t) {
@@ -595,7 +641,8 @@
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,
     stamp: stamp_, buildBlock: buildBlock_, replaceBlock: replaceBlock_, buildSummary: buildSummary_, buildUnapplied: buildUnapplied_, latestAppliedMark: latestAppliedMark_,
     hasStateFile: function () { return !!stateFile; },
-    onFileWritten: null
+    onFileWritten: null, onUnappliedHealed: null,
+    healingDone: function () { return healing || Promise.resolve(); }
   };
   global.Core = api;
 })(window);
