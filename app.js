@@ -125,7 +125,7 @@
   }
   function isCandidate(i) { return !kindOf(i) && !isNotNovel(i) && !!candOf(episodes[i]); }
   function hasReview(i) { var f = fbOf(i); return !!(f.rating || f.good || f.bad); }
-  function isHidden(i) { return isNotNovel(i) || rating(i) === 'dislike'; }
+  function isHidden(i) { return isNotNovel(i) || rating(i) === 'dislike' || rating(i) === 'meh'; }
   function inCat(key) {
     var out = [];
     episodes.forEach(function (ep, i) {
@@ -137,7 +137,7 @@
       else if (key === '@dislike') ok = !nn && rating(i) === 'dislike';
       else if (key === '@candidate') ok = isCandidate(i);
       else if (key === '@notnovel') ok = nn;
-      else ok = !isHidden(i) && ep.cats.indexOf(key) !== -1;   // 별로·소설 아님은 일반 분류에서 숨김
+      else ok = !isHidden(i) && ep.cats.indexOf(key) !== -1;   // 별로·평범·소설 아님은 일반 분류에서 숨김
       if (ok) out.push(i);
     });
     return out;
@@ -296,8 +296,8 @@
     $('count').textContent = (realCat && realCat.src && !sp ? srcLabel(realCat.src) + ' · ' : sp) + catName[view] + ' · ' + list.length + '편';
   }
   function hiddenNote() {
-    var d = inCat('@dislike').length, n = inCat('@notnovel').length, parts = [];
-    if (d) parts.push('별로 ' + d); if (n) parts.push('소설 아님 ' + n);
+    var d = inCat('@dislike').length, m = inCat('@meh').length, n = inCat('@notnovel').length, parts = [];
+    if (m) parts.push('평범 ' + m); if (d) parts.push('별로 ' + d); if (n) parts.push('소설 아님 ' + n);
     return parts.length ? ' · 숨김: ' + parts.join(', ') : '';
   }
   $('search').addEventListener('input', renderHome);
