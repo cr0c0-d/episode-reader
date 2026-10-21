@@ -696,16 +696,58 @@
     });
   }
   /**
-   * 목록을 불러올 때: 색인이 미반영 파일보다 나중에 바뀌었거나(예전 버전 앱·다른 기기에서 저장) 미반영 파일이 없으면
-   * 뒤에서 미반영 파일만 다시 만든다. 목록 표시는 기다리지 않고, 실패해도 다음 저장 때 다시 쓴다.
+   * 목록을 불러올 때 미반영 파일이 없거나, 색인·반영 기록보다 오래됐으면 뒤에서 다시 만든다.
+   * 본문이 같으면(갱신 시각만 다르면) 올리지 않는다. 그 시각 조합은 이 기기에 기억해 다음 실행에서 다시 받지 않는다.
+   * 목록 표시는 기다리지 않고, 실패해도 다음 저장 때 다시 쓴다.
    */
+  var HEAL_LS = 'reader.unappliedHeal';
   var healing = null;
+  function healSig_(fi, uf, logFile) {
+    return [(fi && fi.modifiedTime) || '', (uf && uf.modifiedTime) || '', (logFile && logFile.modifiedTime) || ''].join('|');
+  }
+  function healSeen_(sig) {
+    try { return global.localStorage.getItem(HEAL_LS) === sig; } catch (e) { return false; }
+  }
+  function healMark_(sig) {
+    try { global.localStorage.setItem(HEAL_LS, sig); } catch (e) {}
+  }
+  function shouldHeal_(fi, uf, logFile) {
+    if (!uf || !uf.modifiedTime) return true;
+    var ufMs = Date.parse(uf.modifiedTime) || 0;
+    var idxMs = fi && fi.modifiedTime ? (Date.parse(fi.modifiedTime) || 0) : 0;
+    if (!idxMs || idxMs > ufMs) return true;
+    if (logFile && logFile.modifiedTime && (Date.parse(logFile.modifiedTime) || 0) > ufMs) return true;
+    return false;
+  }
   function healUnapplied_(files, fi) {
     if (!fi || healing) return;
     var uf = pickUnapplied_(files);
-    if (uf && uf.modifiedTime && fi.modifiedTime && uf.modifiedTime >= fi.modifiedTime) return;
+    var logFile = firstByName(files, APPLIED_LOG_NAME);
+    if (!shouldHeal_(fi, uf, logFile)) return;
+    var sig = healSig_(fi, uf, logFile);
+    if (uf && healSeen_(sig)) return;
     healing = withLock_(function () {
-      return readIndex_().then(function (idx) { return writeUnapplied_(idx); });
+      return readIndex_().then(function (idx) {
+        return readAppliedLog_().then(function (log) {
+          var text = buildUnapplied_(idx, log);
+          var norm = stampless_(text);
+          function wrote(f) {
+            if (f) { unappliedFile = f; fileMemo[UNAPPLIED_NAME] = f; }
+            return f;
+          }
+          if (!uf) return writeGenerated_(UNAPPLIED_NAME, text).then(wrote);
+          return D.download(uf.id).then(function (old) {
+            if (stampless_(old) === norm) {
+              lastNorm[UNAPPLIED_NAME] = norm;
+              unappliedFile = uf;
+              fileMemo[UNAPPLIED_NAME] = uf;
+              healMark_(sig);
+              return uf;
+            }
+            return writeGenerated_(UNAPPLIED_NAME, text).then(wrote);
+          }, function () { return writeGenerated_(UNAPPLIED_NAME, text).then(wrote); });
+        });
+      });
     }).then(function () { if (api.onUnappliedHealed) try { api.onUnappliedHealed(); } catch (e) {} }, function (e) {
       if (global.console) console.warn('미반영_피드백.md 갱신 실패', e);
     }).then(function () { healing = null; });
