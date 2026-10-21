@@ -466,6 +466,7 @@
     var my = ++openSeqNo;
     var done = function (md) {
       cache[ep.id] = md;
+      if (Core.noteEpisodeText) Core.noteEpisodeText(ep.id, md, ep.modified);
       safeSet('lastMd', JSON.stringify({ id: ep.id, num: ep.num, title: ep.title, md: md }));
       if (my !== openSeqNo) return;
       var parts = splitMd(md);
@@ -521,7 +522,10 @@
     });
   }
   function prefetch(ep) {
-    loadContent(ep, true).then(function (md) { cache[ep.id] = md; }, function () {});
+    loadContent(ep, true).then(function (md) {
+      cache[ep.id] = md;
+      if (Core.noteEpisodeText) Core.noteEpisodeText(ep.id, md, ep.modified);
+    }, function () {});
   }
   Core.onFileWritten = function (id, text, modified) {
     // 피드백을 쓰며 바뀐 원본: 저장본도 맞춰 두면 다음에 다시 받지 않는다.
@@ -637,7 +641,7 @@
       $('kindDesc').appendChild(document.createTextNode(why + ' '));
       var keep = document.createElement('button'); keep.textContent = '소설 맞음';
       keep.style.cssText = 'padding:4px 10px;font-size:13px;margin-top:6px';
-      keep.onclick = function () { fbKind = 'novel'; paintKind(); fbDirty = true; saveFeedbackNow(); };
+      keep.onclick = function () { fbKind = 'novel'; paintKind(); scheduleFeedback(500); };
       $('kindDesc').appendChild(keep);
     }
   }
@@ -650,7 +654,7 @@
     if (fbIdx < 0) return;
     if (isNotNovelWith(fbIdx, fbKind)) fbKind = defaultNotNovel(fbIdx) ? 'novel' : '';
     else fbKind = 'notnovel';
-    paintKind(); fbDirty = true; saveFeedbackNow();
+    paintKind(); scheduleFeedback(500);
   };
   function paintRates() {
     Array.prototype.forEach.call(document.querySelectorAll('.rates button'), function (b) {
@@ -661,7 +665,7 @@
     b.onclick = function () {
       var r = b.getAttribute('data-r');
       fbRating = fbRating === r ? '' : r;   // 다시 누르면 해제
-      paintRates(); fbDirty = true; saveFeedbackNow();
+      paintRates(); scheduleFeedback(500);
     };
   });
   ['fbGood', 'fbBad'].forEach(function (id) {
@@ -670,16 +674,46 @@
       clearTimeout(fbTimer); fbTimer = setTimeout(saveFeedbackNow, 2500);
     });
   });
+  function scheduleFeedback(ms) {
+    fbDirty = true;
+    clearTimeout(fbTimer);
+    if (!fbSaving) $('fbStatus').textContent = '곧 저장';
+    fbTimer = setTimeout(saveFeedbackNow, ms);
+  }
+  function syncSaveBtn() {
+    var b = $('fbSave');
+    b.disabled = !!fbSaving;
+    b.textContent = fbSaving ? '저장 중…' : '저장';
+  }
+  function feedbackSnapshot(ep) {
+    var f = feedback[keyOf(ep)] || {};
+    return { rating: f.rating || '', good: f.good || '', bad: f.bad || '', kind: f.kind || '' };
+  }
+  function sameFeedback(a, b) {
+    return (a.rating || '') === (b.rating || '') && String(a.good || '').trim() === String(b.good || '').trim()
+      && String(a.bad || '').trim() === String(b.bad || '').trim() && (a.kind || '') === (b.kind || '');
+  }
   $('fbSave').onclick = function () { fbDirty = true; saveFeedbackNow(); };
   function flushFeedback() { if (fbDirty) saveFeedbackNow(); }
   function saveFeedbackNow() {
     clearTimeout(fbTimer);
-    if (!fbEp || !fbDirty) return;
-    if (fbSaving) { fbQueued = true; return; }
+    if (!fbEp || !fbDirty) { syncSaveBtn(); return; }
+    if (fbSaving) { fbQueued = true; syncSaveBtn(); return; }
     var ep = fbEp, payload = { rating: fbRating, good: $('fbGood').value, bad: $('fbBad').value, kind: fbKind };
+    if (sameFeedback(feedbackSnapshot(ep), payload)) {
+      fbDirty = false; fbQueued = false;
+      var prev = feedback[keyOf(ep)];
+      if (sameEp(fbEp, ep)) $('fbStatus').textContent = prev && prev.updated ? '마지막 저장 ' + prev.updated : '';
+      syncSaveBtn();
+      return;
+    }
     fbDirty = false; fbSaving = true;
+    syncSaveBtn();
     $('fbStatus').textContent = '저장 중…';
     var meta = metaOf(ep), k = keyOf(ep);
+    (ep.ids || [ep.id]).forEach(function (id) {
+      if (cache[id] != null && Core.noteEpisodeText) Core.noteEpisodeText(id, cache[id], id === ep.id ? ep.modified : '');
+    });
     localTouch[k] = Date.now();
     Core.saveFeedback(meta, payload).then(function (res) {
       fbSaving = false;
@@ -688,9 +722,11 @@
       if (legacyFb[k]) { delete feedback[legacyFb[k]]; delete legacyFb[k]; }
       saveListCache();
       if (sameEp(fbEp, ep)) { $('fbStatus').textContent = '저장됨 ' + res.updated + ' · 원본 파일과 모음 파일에 반영'; paintKind(); }
-      if (fbQueued) { fbQueued = false; fbDirty = true; saveFeedbackNow(); }
+      if (fbQueued) { fbQueued = false; fbDirty = true; saveFeedbackNow(); return; }
+      syncSaveBtn();
     }, function (e) {
-      fbSaving = false; fbDirty = true;
+      fbSaving = false; fbDirty = true; fbQueued = false;
+      syncSaveBtn();
       if (sameEp(fbEp, ep)) $('fbStatus').textContent = '저장 실패: ' + errMsg(e) + ' (저장 버튼을 다시 눌러 주세요)';
     });
   }
@@ -1423,7 +1459,12 @@
     });
     data.feedback = fresh;
     setData(data);
-    episodes.forEach(function (e) { if (oldMod[e.id] && oldMod[e.id] !== e.modified) delete cache[e.id]; });
+    episodes.forEach(function (e) {
+      if (oldMod[e.id] && oldMod[e.id] !== e.modified) {
+        delete cache[e.id];
+        if (Core.dropEpisodeText) Core.dropEpisodeText(e.id);
+      }
+    });
     selected = {};
     selIds.forEach(function (id) { var k = indexOfId(id); if (k >= 0) selected[k] = true; });
     if (selecting) updSel();
