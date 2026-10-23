@@ -554,7 +554,7 @@
       '## 생성 에이전트(ChatGPT·Grok) 참고 방법',
       '',
       '- **피드백 반영은 먼저 같은 폴더의 `' + UNAPPLIED_NAME + '`만 읽는다.** 마지막 반영 이후 새로 남기거나 고친 피드백만 들어 있어 짧다. 이 전체 모음은 지난 피드백을 다시 찾아볼 때만 연다.',
-      '- 반영을 마치면 `' + APPLIED_LOG_NAME + '` 맨 아래에 `반영완료:` 줄을 덧붙인다(형식은 그 파일 머리말 참고).',
+      '- 반영을 마치면 `' + APPLIED_LOG_NAME + '` 맨 아래에 `반영완료:` 줄을 덧붙인다. 작가는 자기 이름만 적고, 그 줄은 그 작가의 편만 인박스에서 뺀다(형식은 미반영 파일 머리말 참고).',
       '- 사용자가 지난 글을 다시 읽으며 뒤늦게 남긴 평가다. 당시 대화의 반응보다 이 재독 피드백이 더 최신 판단이다.',
       '- `⭐ 최고`와 `👍 좋아요`의 **좋았던 점**은 살리고, 모든 편의 **아쉬웠던 점**과 `👎 별로` 편의 패턴은 반복하지 않는다.',
       '- `😐 평범`은 나쁘지는 않지만 인상이 약했던 편이다. **좋았던 점**은 살리고, **아쉬웠던 점**과 메모에서 무엇이 밋밋했는지 찾아 다음 편에서 보완한다. 폐기하거나 피할 대상은 아니다.',
@@ -605,67 +605,118 @@
     return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - 9 * 3600 * 1000;
   }
   /**
-   * 반영_기록.md에서 가장 늦은 '반영완료:' 시각을 찾는다. 줄 맨 앞(목록 기호 '-'/'*' 허용)에 있어야 한다.
-   * 시각 형식: 2026-10-20T09:30+09:00 / 2026-10-20 09:30 (시간대 없으면 한국 시각) / ...Z. 초는 버리고 분 단위로 본다.
+   * 반영완료 줄의 작가. 작가가 없거나 전체/알 수 없으면 all.
+   * ChatGPT·GPT → gpt, Grok·그록·SuperGrok → grok, 기존 → old.
    */
-  function latestAppliedMark_(text) {
-    var re = /^[ \t]*(?:[-*][ \t]+)?반영완료[ \t]*:[ \t]*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?[ \t]*(Z|[+-]\d{2}:?\d{2})?/gm;
-    var best = null, m;
-    while ((m = re.exec(String(text || '').replace(/\r/g, '')))) {
+  function writerKey_(label) {
+    var t = String(label || '').trim().toLowerCase();
+    if (!t || t === '전체' || t === 'all' || t === '공통') return 'all';
+    if (t.indexOf('chatgpt') !== -1 || t === 'gpt' || t.indexOf('지피티') !== -1) return 'gpt';
+    if (t.indexOf('grok') !== -1 || t.indexOf('그록') !== -1) return 'grok';
+    if (t.indexOf('기존') !== -1 || t === 'old') return 'old';
+    return 'all';
+  }
+  function srcKey_(src) {
+    return (src === 'gpt' || src === 'grok' || src === 'old') ? src : 'all';
+  }
+  /** 반영_기록.md의 반영완료 시각. all은 작가: 전체(또는 작가 없음)의 가장 늦은 시각. */
+  function appliedMarks_(text) {
+    var re = /^[ \t]*(?:[-*][ \t]+)?반영완료[ \t]*:[ \t]*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?[ \t]*(Z|[+-]\d{2}:?\d{2})?(.*)$/gm;
+    var marks = { all: null, gpt: null, grok: null, old: null };
+    var s = String(text || '').replace(/\r/g, ''), m;
+    while ((m = re.exec(s))) {
       var off = 9 * 60;
       if (m[6] === 'Z') off = 0;
       else if (m[6]) { var z = m[6].replace(':', ''); off = (z[0] === '-' ? -1 : 1) * (parseInt(z.slice(1, 3), 10) * 60 + parseInt(z.slice(3, 5), 10)); }
       var ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - off * 60000;
-      if (best === null || ms > best) best = ms;
+      var wm = /작가[ \t]*:[ \t]*([^|]+)/.exec(m[7] || '');
+      var key = writerKey_(wm ? wm[1] : '');
+      if (marks[key] == null || ms > marks[key]) marks[key] = ms;
     }
-    return best;
+    return marks;
+  }
+  /** 그 작가 시각과 전체 기준 중 더 늦은 분. 둘 다 없으면 null. */
+  function cutoffFor_(src, marks) {
+    var key = srcKey_(src);
+    var own = key === 'all' ? null : marks[key];
+    var floor = marks.all;
+    if (own == null) return floor;
+    if (floor == null) return own;
+    return own > floor ? own : floor;
   }
   /**
-   * 미반영 피드백 파일 내용. 기록 시각이 마지막 반영완료 시각과 같은 분이거나 그 뒤인 항목만 넣는다(같은 분은 놓치지 않게 포함).
-   * 기록 시각이 없는 항목은 반영 기록이 하나도 없을 때만 넣는다.
+   * 가장 늦은 반영완료 시각(작가 구분 없이). 옛 호출 호환.
+   */
+  function latestAppliedMark_(text) {
+    var marks = appliedMarks_(text);
+    var best = marks.all;
+    ['gpt', 'grok', 'old'].forEach(function (k) {
+      if (marks[k] != null && (best == null || marks[k] > best)) best = marks[k];
+    });
+    return best;
+  }
+  function markLabel_(ms) { return ms == null ? '없음' : stamp_(new Date(ms)); }
+  /**
+   * 미반영 피드백. 각 편은 그 작가의 마지막 반영완료와 '작가: 전체' 기준 중 더 늦은 시각 이후(같은 분 포함)만 넣는다.
+   * 한 작가의 반영완료가 다른 작가 편을 지우지 않는다. 기록 시각이 없는 항목은 반영 기록이 하나도 없을 때만 넣는다.
    */
   function buildUnapplied_(idx, logText) {
-    var mark = latestAppliedMark_(logText);
+    var marks = appliedMarks_(logText);
     var bySrc = function (a, b) { return a.num - b.num || srcOrder_(a.src) - srcOrder_(b.src); };
     var author = function (x) { return x.src && x.src !== 'old' ? (SOURCE_LABEL[x.src] || x.src) : SOURCE_LABEL.old; };
     var items = Object.keys(idx.items).map(function (k) { return idx.items[k]; }).filter(function (x) {
       if (x.kind === 'notnovel' || !(x.rating || x.good || x.bad)) return false;
+      var cut = cutoffFor_(x.src, marks);
       var t = kstMs_(x.updated);
-      if (mark === null) return true;
-      return t !== null && t >= mark;
+      if (cut === null) return true;
+      return t !== null && t >= cut;
     }).sort(bySrc);
     var out = [
       '# 미반영 재독 피드백',
       '',
       '> 에피소드 리더 앱이 자동으로 만드는 파일이다. 직접 수정하지 말 것(피드백을 저장할 때마다 덮어써짐).',
       '> 마지막 갱신: ' + stamp_() + ' · 미반영 피드백 ' + items.length + '편',
-      '> 기준: ' + (mark === null ? '`' + APPLIED_LOG_NAME + '`에 반영완료 기록 없음 → 지금까지의 피드백 전부' : '마지막 반영완료 ' + stamp_(new Date(mark)) + ' (한국 시각) 이후(같은 분 포함)에 남기거나 고친 피드백'),
+      '> 기준: 전체 ' + markLabel_(marks.all) + ' · ChatGPT ' + markLabel_(marks.gpt) + ' · Grok ' + markLabel_(marks.grok) + ' · 기존 ' + markLabel_(marks.old),
+      '> 각 편은 그 작가의 마지막 반영완료와 전체 기준 중 더 늦은 시각 이후(같은 분 포함)만 남긴다.',
       '',
       '## 생성 에이전트 사용 방법',
       '',
-      '- 마지막 반영 이후 새로 남기거나 고친 피드백만 모은 파일이다. 피드백 반영은 이 파일만 읽으면 된다(전체 모음 `' + FEEDBACK_SUMMARY_NAME + '` 파일은 필요할 때만 연다).',
-      '- 반영을 마치면 같은 폴더 `' + APPLIED_LOG_NAME + '` 맨 아래에 한 줄을 덧붙인다. 예: `반영완료: 2026-10-20T09:30+09:00 | 작가: Grok | 반영 편: 771, 772`',
-      '- 앱은 반영 기록을 읽기만 하고, 다음에 피드백을 저장할 때 이 파일을 다시 만든다. 그래서 이 파일의 기준 시각보다 늦은 `반영완료:` 줄이 반영 기록에 이미 있으면, 그 시각 전에 기록된 항목은 이미 반영된 것이니 건너뛴다.',
+      '- ChatGPT는 `## ChatGPT`만, Grok은 `## Grok`만 읽고 반영한다. 다른 작가 절은 읽지 않고, 규칙에도 올리지 않는다.',
+      '- 반영을 마치면 `' + APPLIED_LOG_NAME + '` 맨 아래에 한 줄을 덧붙인다. 예: `반영완료: 2026-10-20T09:30+09:00 | 작가: Grok | 반영 편: 771, 772`',
+      '- 그 줄의 작가는 자기 이름만 쓴다. ChatGPT 또는 Grok. 다른 작가의 편 번호를 적지 않는다. `작가: 전체`는 모든 작가의 기준 시각을 올리므로 지예가 말할 때만 쓴다.',
+      '- 앱은 반영 기록을 읽기만 하고, 다음에 피드백을 저장할 때 이 파일을 다시 만든다. 자기 작가 시각 전에 기록된 그 작가의 편만 빠진다. 다른 작가 편은 남는다.',
+      '- 다른 작가 블록을 이 파일에서 지우지 않는다. 상세 아카이브도 만들지 않는다. 원본은 각 에피소드 하단 `## 독자 반응`이다.',
       '- 평가: `⭐ 최고`·`👍 좋아요`는 좋았던 점을 살리고, `👎 별로`는 같은 패턴을 반복하지 않는다.',
       '- `😐 평범`은 나쁘지는 않지만 인상이 약했던 편이다. **좋았던 점**은 살리고, **아쉬웠던 점**과 메모에서 무엇이 밋밋했는지 찾아 다음 편에서 보완한다. 폐기하거나 피할 대상은 아니다.',
       '- 같은 내용이 각 원본 파일 맨 끝 `## 재독 피드백` 구역에도 있다. 그 구역(재독피드백 표시 사이)은 앱이 관리하므로 고치지 않는다.',
       ''
     ];
     if (!items.length) { out.push('(미반영 피드백 없음)', ''); return out.join('\n'); }
-    out.push('## 미반영 피드백 (' + items.length + '편)', '');
+    var buckets = { gpt: [], grok: [], old: [], other: [] };
     items.forEach(function (x) {
-      out.push('### ' + pad3_(x.num) + '. ' + x.title + (x.src && x.src !== 'old' ? ' (' + author(x) + ')' : ''), '');
-      out.push('- 작가: ' + author(x));
-      out.push('- 평가: ' + (RATING_LABEL[x.rating || ''] || RATING_LABEL['']));
-      out.push('- 분류: ' + (x.cats && x.cats.length ? x.cats.join(', ') : '-'));
-      out.push('- 드라이브 파일 ID: ' + ((x.ids || []).join(', ') || '-'));
-      out.push('- 기록: ' + (x.updated || '(시각 없음)'));
-      out.push('- 좋았던 점: ' + (x.good ? oneBlock_(x.good) : '(없음)'));
-      out.push('- 아쉬웠던 점: ' + (x.bad ? oneBlock_(x.bad) : '(없음)'));
-      if (x.memo) out.push('- 메모: ' + oneBlock_(String(x.memo)));
-      out.push('');
+      var k = srcKey_(x.src);
+      if (buckets[k]) buckets[k].push(x);
+      else buckets.other.push(x);
+    });
+    [['gpt', 'ChatGPT'], ['grok', 'Grok'], ['old', '기존'], ['other', '기타']].forEach(function (g) {
+      var list = buckets[g[0]];
+      if (!list.length) return;
+      out.push('## ' + g[1] + ' (' + list.length + '편)', '');
+      list.forEach(function (x) { pushUnappliedItem_(out, x, author); });
     });
     return out.join('\n');
+  }
+  function pushUnappliedItem_(out, x, author) {
+    out.push('### ' + pad3_(x.num) + '. ' + x.title + (x.src && x.src !== 'old' ? ' (' + author(x) + ')' : ''), '');
+    out.push('- 작가: ' + author(x));
+    out.push('- 평가: ' + (RATING_LABEL[x.rating || ''] || RATING_LABEL['']));
+    out.push('- 분류: ' + (x.cats && x.cats.length ? x.cats.join(', ') : '-'));
+    out.push('- 드라이브 파일 ID: ' + ((x.ids || []).join(', ') || '-'));
+    out.push('- 기록: ' + (x.updated || '(시각 없음)'));
+    out.push('- 좋았던 점: ' + (x.good ? oneBlock_(x.good) : '(없음)'));
+    out.push('- 아쉬웠던 점: ' + (x.bad ? oneBlock_(x.bad) : '(없음)'));
+    if (x.memo) out.push('- 메모: ' + oneBlock_(String(x.memo)));
+    out.push('');
   }
   // 미반영 파일은 한 번 찾은 ID를 계속 쓴다. 같은 이름이 여러 개면 기억한 ID → 가장 먼저 만든 파일 순으로 고른다(새로 만들지 않음).
   var unappliedFile = null;
