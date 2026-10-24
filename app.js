@@ -1423,8 +1423,15 @@
     return null;
   }
   function setData(data) {
-    episodes = (data && data.episodes) || [];
-    categories = (data && data.categories) || [];
+    data = data || {};
+    function hiddenSrc(x) {
+      if (!x || !Core.retiredSource) return false;
+      return Core.retiredSource(x.src) || Core.retiredSource(x.key) || Core.retiredSource(x.label)
+        || Core.retiredSource(x.badge) || Core.retiredSource(x.folder) || Core.retiredSource(x.name)
+        || Core.retiredSource(x.path) || Core.retiredSource(x.title);
+    }
+    episodes = (data.episodes || []).filter(function (e) { return !hiddenSrc(e); });
+    categories = (data.categories || []).filter(function (c) { return !hiddenSrc(c); });
     catName = {};
     categories.forEach(function (c) { catName[c.key] = c.name; });
     VIRTUAL.forEach(function (v) { catName[v[0]] = v[1]; });
@@ -1433,11 +1440,17 @@
     keepNovel = (data && data.keepNovel) || {};
     hiddenFolders = (data && data.hiddenFolders) || [];
     legacyFb = (data && data.legacyFb) || {};
-    archiveRoots = (data && data.archive) || [];
+    [feedback, candidates, keepNovel, legacyFb].forEach(function (map) {
+      Object.keys(map).forEach(function (k) {
+        if (Core.retiredSource(k) || hiddenSrc(map[k])) delete map[k];
+      });
+    });
+    archiveRoots = ((data && data.archive) || []).filter(function (r) { return !hiddenSrc(r); });
     numCount = {};
     episodes.forEach(function (e) { numCount[e.num] = (numCount[e.num] || 0) + 1; });
     arcRootsDrawn = false;
-    sourceList = (data && data.sources) || deriveSources(data || {});
+    sourceList = ((data && data.sources) || deriveSources({ episodes: episodes, categories: categories }))
+      .filter(function (a) { return !hiddenSrc(a); });
     srcMap = {}; sourceList.forEach(function (a) { srcMap[a.id] = a; });
     sourcesPresent = sourceList.length > 0 || episodes.some(function (e) { return !!e.src; });
     $('homeStatus').style.display = episodes.length ? 'none' : 'block';

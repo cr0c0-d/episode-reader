@@ -35,6 +35,11 @@
   var AUTHOR_BADGE = { 'ChatGPT': 'GPT', '새_분류': '그록' };
   var SOURCE_LABEL = { old: '기존', gpt: 'ChatGPT', grok: '그록봇' };   // 이번 목록에서 찾은 작가가 더해진다
   var SOURCE_ORDER = { old: 0 };
+  /** 더 쓰지 않는 작가. 그록·그록봇·Grok·ChatGPT는 남기고 SuperGrok·슈퍼그록만 가린다. */
+  function isRetiredSource_(name) {
+    var t = String(name || '').toLowerCase().replace(/[\s_]+/g, '');
+    return t.indexOf('supergrok') !== -1 || t.indexOf('슈퍼그록') !== -1;
+  }
   function authorOf_(folderName, parent) {
     var m = AUTHOR_RE.exec(folderName || '');
     if (!m || !parent || !(parent.id === ROOT_FOLDER_ID || parent.name === AUTHOR_PARENT || baseName_(parent.name) === AUTHOR_PARENT)) return null;
@@ -105,6 +110,7 @@
               listings[id] = files;
               files.forEach(function (f) {
                 if (f.mimeType !== FOLDER_MIME) return;
+                if (isRetiredSource_(f.name)) return;
                 if (!isExcluded_(f.name)) schedule(f.id);
                 else if (id === ROOT_FOLDER_ID && f.name === FEEDBACK_FOLDER_NAME && !fbPromise) {
                   fbFolderId = f.id;
@@ -133,6 +139,7 @@
         seen[folder.id] = true;
         (listings[folder.id] || []).forEach(function (f) {
           if (f.mimeType === FOLDER_MIME) {
+            if (isRetiredSource_(f.name)) return;
             var fpath = (folder.key ? folder.key + '/' : '') + f.name;
             if (!isExcluded_(f.name)) {
               var au = folder.src === 'old' ? authorOf_(f.name, folder) : null;
@@ -152,6 +159,7 @@
             return;
           }
           var src = folder.src;
+          if (isRetiredSource_(f.name) || isRetiredSource_(src)) return;
           var m = EPISODE_RE.exec(f.name), num, rawTitle;
           if (m) { num = parseInt(m[1], 10); rawTitle = m[2]; }
           else if (src !== 'old' && (m = PREFIXED_RE.exec(f.name))) { num = parseInt(m[2], 10); rawTitle = m[3]; }
@@ -535,7 +543,9 @@
   }
 
   function buildSummary_(idx) {
-    var all = Object.keys(idx.items).map(function (k) { return idx.items[k]; });
+    var all = Object.keys(idx.items).filter(function (k) {
+      return !isRetiredSource_(k) && !isRetiredSource_(idx.items[k] && idx.items[k].src);
+    }).map(function (k) { return idx.items[k]; });
     var bySrc = function (a, b) { return a.num - b.num || srcOrder_(a.src) - srcOrder_(b.src); };
     var srcTag = function (x) { return x.src && x.src !== 'old' ? ' (' + (SOURCE_LABEL[x.src] || x.src) + ')' : ''; };
     var notNovel = all.filter(function (x) { return x.kind === 'notnovel'; }).sort(bySrc);
@@ -606,12 +616,14 @@
   }
   /**
    * 반영완료 줄의 작가. 작가가 없거나 전체/알 수 없으면 all.
-   * ChatGPT·GPT → gpt, Grok·그록·SuperGrok → grok, 기존 → old.
+   * ChatGPT·GPT → gpt, Grok·그록·그록봇 → grok, 기존 → old.
+   * SuperGrok·슈퍼그록은 그록으로 세지 않는다.
    */
   function writerKey_(label) {
     var t = String(label || '').trim().toLowerCase();
     if (!t || t === '전체' || t === 'all' || t === '공통') return 'all';
     if (t.indexOf('chatgpt') !== -1 || t === 'gpt' || t.indexOf('지피티') !== -1) return 'gpt';
+    if (isRetiredSource_(t)) return 'retired';
     if (t.indexOf('grok') !== -1 || t.indexOf('그록') !== -1) return 'grok';
     if (t.indexOf('기존') !== -1 || t === 'old') return 'old';
     return 'all';
@@ -664,7 +676,9 @@
     var marks = appliedMarks_(logText);
     var bySrc = function (a, b) { return a.num - b.num || srcOrder_(a.src) - srcOrder_(b.src); };
     var author = function (x) { return x.src && x.src !== 'old' ? (SOURCE_LABEL[x.src] || x.src) : SOURCE_LABEL.old; };
-    var items = Object.keys(idx.items).map(function (k) { return idx.items[k]; }).filter(function (x) {
+    var items = Object.keys(idx.items).filter(function (k) {
+      return !isRetiredSource_(k) && !isRetiredSource_(idx.items[k] && idx.items[k].src);
+    }).map(function (k) { return idx.items[k]; }).filter(function (x) {
       if (x.kind === 'notnovel' || !(x.rating || x.good || x.bad)) return false;
       var cut = cutoffFor_(x.src, marks);
       var t = kstMs_(x.updated);
@@ -861,7 +875,7 @@
     BLOCK_START: BLOCK_START, BLOCK_END: BLOCK_END, ROOT_FOLDER_ID: ROOT_FOLDER_ID,
     getEpisodes: getEpisodes, getEpisodeContent: getEpisodeContent,
     listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent,
-    SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_,
+    SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_, retiredSource: isRetiredSource_,
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,
     noteEpisodeText: noteEpisodeText, dropEpisodeText: dropEpisodeText,
     stamp: stamp_, buildBlock: buildBlock_, replaceBlock: replaceBlock_, buildSummary: buildSummary_, buildUnapplied: buildUnapplied_, latestAppliedMark: latestAppliedMark_,
