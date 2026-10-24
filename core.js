@@ -260,6 +260,64 @@
   /** 에피소드 원문(마크다운)을 읽어 온다. */
   function getEpisodeContent(fileId) { return D.download(fileId); }
 
+  /**
+   * 교정 화면이 고치는 본문과, 그대로 둘 꼬리(독자 반응·재독 피드백)를 나눈다.
+   * 꼬리는 첫 독자 반응/정리 메모 제목, 없으면 재독 피드백 표식부터다.
+   */
+  var META_HEAD_RE = /^(?:-{3,}[ \t]*\r?\n+)?##[ \t]*(정리 메모|독자 반응)[ \t]*$/m;
+  function splitEditable_(md) {
+    var text = String(md || '');
+    var cut = text.length;
+    var a = text.indexOf(BLOCK_START);
+    if (a !== -1) cut = Math.min(cut, a);
+    var m = META_HEAD_RE.exec(text.slice(0, cut));
+    if (m) cut = m.index;
+    return { body: text.slice(0, cut).replace(/\s+$/, ''), tail: text.slice(cut) };
+  }
+  function joinEditable_(body, tail) {
+    var b = String(body == null ? '' : body).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s+$/, '');
+    if (!tail || !String(tail).trim()) return b + '\n';
+    return b + '\n\n' + String(tail).replace(/^\s+/, '');
+  }
+  function freshText_(id) {
+    return D.getMeta(id, 'id,name,mimeType,modifiedTime').then(function (meta) {
+      return D.download(id).then(function (text) {
+        episodeCache[id] = { ok: true, text: text, modified: meta.modifiedTime, mime: meta.mimeType };
+        return { text: text, mime: meta.mimeType || 'text/markdown', modified: meta.modifiedTime };
+      });
+    });
+  }
+  /**
+   * 본문만 바꾼다. 각 사본의 독자 반응·재독 피드백 꼬리는 그 파일 것을 유지한다.
+   * ep: { id, ids }
+   */
+  function saveEpisodeBody(ep, body) {
+    var ids = (ep.ids && ep.ids.length) ? ep.ids.slice() : [ep.id];
+    if (ids.indexOf(ep.id) === -1) ids.unshift(ep.id);
+    return withLock_(function () {
+      return Promise.all(ids.map(function (id) {
+        return freshText_(id).then(function (cur) {
+          var parts = splitEditable_(cur.text);
+          var next = joinEditable_(body, parts.tail);
+          if (next === cur.text) return { id: id, text: cur.text, modified: cur.modified, same: true };
+          return D.update(id, next, cur.mime || 'text/markdown').then(function (r) {
+            var modified = (r && r.modifiedTime) || cur.modified;
+            episodeCache[id] = { ok: true, text: next, modified: modified, mime: cur.mime };
+            if (api.onFileWritten) try { api.onFileWritten(id, next, modified); } catch (e) {}
+            return { id: id, text: next, modified: modified, same: false };
+          });
+        }).catch(function (e) {
+          if (id === ep.id) throw e;
+          return { id: id, skipped: true };
+        });
+      })).then(function (rows) {
+        var primary = rows[0];
+        for (var i = 0; i < rows.length; i++) if (rows[i].id === ep.id) primary = rows[i];
+        return { text: primary.text, modified: primary.modified, changed: rows.some(function (r) { return r && !r.same && !r.skipped; }) };
+      });
+    });
+  }
+
   // ---------- 저장 (한 기기 안에서는 차례대로: LockService 대신) ----------
   var chain = Promise.resolve();
   function withLock_(fn) {
@@ -873,7 +931,8 @@
 
   var api = {
     BLOCK_START: BLOCK_START, BLOCK_END: BLOCK_END, ROOT_FOLDER_ID: ROOT_FOLDER_ID,
-    getEpisodes: getEpisodes, getEpisodeContent: getEpisodeContent,
+    getEpisodes: getEpisodes, getEpisodeContent: getEpisodeContent, saveEpisodeBody: saveEpisodeBody,
+    splitEditable: splitEditable_, joinEditable: joinEditable_,
     listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent,
     SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_, retiredSource: isRetiredSource_,
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,

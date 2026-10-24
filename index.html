@@ -72,6 +72,7 @@
   <div class="nav" id="navTop">
     <button id="prevTop">← 이전 화</button>
     <button id="listTop">목록</button>
+    <button id="editBtn">교정</button>
     <button id="nextTop">다음 화 →</button>
   </div>
   <div id="pager"><div id="flow">
@@ -79,11 +80,21 @@
     <article id="article"></article>
     <div id="flowEnd"></div>
   </div></div>
+  <div id="editor" hidden>
+    <p class="editnote">본문만 고칩니다. 파일 끝의 독자 반응과 재독 피드백은 그대로 두고, 목록에 보이는 제목(파일 이름)은 바꾸지 않습니다.</p>
+    <textarea id="editBox" spellcheck="true" aria-label="본문 마크다운"></textarea>
+    <div class="editbar">
+      <span class="st" id="editStatus"></span>
+      <button id="editCancel" type="button">취소</button>
+      <button id="editSave" type="button" class="primary">드라이브에 저장</button>
+    </div>
+  </div>
   <div id="after">
     <div class="endhead"><button id="backToText">← 본문으로</button><span id="endTitle">이 화의 끝</span></div>
     <div id="meta"></div>
     <div class="fb" id="fb">
       <div id="fbMain">
+      <div class="fbrow editjump"><span class="st">오탈자나 문장을 고치려면</span><button id="editBtnEnd" type="button">본문 교정</button></div>
       <h3>다시 읽고 남기는 피드백</h3>
       <div class="rates">
         <button data-r="best">⭐ 최고</button>
@@ -111,6 +122,7 @@
 <div id="pageBar" class="pagebar">
   <button id="pbPrev">← 이전 화</button>
   <button id="pbList">목록</button>
+  <button id="pbEdit">교정</button>
   <button id="pbEnd">메모·피드백</button>
   <button id="pbNext">다음 화 →</button>
 </div>

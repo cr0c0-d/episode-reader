@@ -398,6 +398,8 @@
   // ---------- 화면 전환 ----------
   var homeScroll = 0, readerOpen = false;
   function showHome(push, toArc) {
+    if (editing && !confirmLeaveEdit()) return;
+    closeEdit(false);
     flushFeedback();
     saveScroll();
     openSeqNo++;
@@ -435,6 +437,8 @@
 
   function openEpisode(i, cat, push, p) {
     if (i < 0 || i >= episodes.length) return;
+    if (editing && !confirmLeaveEdit()) return;
+    closeEdit(false);
     p = normPos(p);
     if (selecting) { selecting = false; selected = {}; document.body.classList.remove('selecting'); $('selBtn').textContent = '여러 편 선택'; }
     flushFeedback();
@@ -451,6 +455,8 @@
     $('reader').style.display = 'block';
     $('backBtn').style.display = 'inline-block';
     $('fb').style.display = '';
+    $('editBtn').hidden = false;
+    $('pbEdit').hidden = false;
     $('headTitle').textContent = ep.num + '. ' + ep.title;
     $('endTitle').textContent = ep.num + '. ' + ep.title + ' · 끝';
     updateNav();
@@ -731,14 +737,79 @@
     });
   }
   window.addEventListener('beforeunload', function (e) {
-    if (fbDirty || fbSaving) { saveFeedbackNow(); e.preventDefault(); e.returnValue = ''; }
+    if (editDirty() || fbDirty || fbSaving) { saveFeedbackNow(); e.preventDefault(); e.returnValue = ''; }
   });
+
+  // ---------- 본문 교정 (독자 반응·재독 피드백 꼬리는 유지) ----------
+  var editing = false, editBody = '', editEp = null;
+  function editDirty() { return editing && $('editBox').value !== editBody; }
+  function confirmLeaveEdit() {
+    if (!editDirty()) return true;
+    return window.confirm('고친 본문을 저장하지 않고 나갈까요?');
+  }
+  function closeEdit() {
+    if (!editing) return;
+    editing = false;
+    editEp = null;
+    document.body.classList.remove('editing');
+    $('editor').hidden = true;
+    $('editSave').disabled = false;
+    applyLayout();
+  }
+  function startEdit() {
+    if (editing || arcOpen || arcListing || pos < 0) return;
+    var ep = episodes[seq[pos]];
+    if (!ep) return;
+    flushFeedback();
+    var openBox = function (text) {
+      if (pos < 0 || !episodes[seq[pos]] || episodes[seq[pos]].id !== ep.id) return;
+      var parts = Core.splitEditable(text);
+      editEp = ep;
+      editBody = parts.body;
+      $('editBox').value = parts.body;
+      $('editStatus').textContent = (ep.ids && ep.ids.length > 1) ? '같은 글의 사본도 함께 고칩니다.' : '';
+      $('editSave').disabled = false;
+      editing = true;
+      $('editor').hidden = false;
+      document.body.classList.add('editing');
+      applyLayout();
+      window.scrollTo(0, 0);
+      $('editBox').focus();
+    };
+    var md = cache[ep.id];
+    if (md != null) openBox(md);
+    else loadContent(ep).then(openBox, function (e) { toast('본문을 불러오지 못했어요. ' + errMsg(e)); });
+  }
+  function saveEdit() {
+    if (!editing || !editEp || $('editSave').disabled) return;
+    var ep = editEp, body = $('editBox').value;
+    if (body === editBody) { closeEdit(); return; }
+    $('editSave').disabled = true;
+    $('editStatus').textContent = '저장 중…';
+    Core.saveEpisodeBody({ id: ep.id, ids: ep.ids || [ep.id] }, body).then(function (res) {
+      editBody = Core.splitEditable(res.text).body;
+      var i = indexOfId(ep.id);
+      closeEdit();
+      toast(res.changed ? '본문을 저장했어요' : '바꿀 내용이 없어요');
+      if (i >= 0) openEpisode(i, seqCat, false);
+    }, function (e) {
+      $('editSave').disabled = false;
+      $('editStatus').textContent = '저장 실패: ' + errMsg(e);
+    });
+  }
+  $('editBtn').onclick = $('editBtnEnd').onclick = $('pbEdit').onclick = startEdit;
+  $('editCancel').onclick = function () {
+    if (!confirmLeaveEdit()) return;
+    closeEdit();
+    applyLayout();
+  };
+  $('editSave').onclick = saveEdit;
 
   // ---------- 쪽 넘기기 ----------
   // page = 지금 보이는 화면(양쪽 보기면 두 쪽 묶음)의 번호, pageCount = 화면 수, cols = 전체 쪽 수
   var page = 0, pageCount = 1, pageStep = 0, curAnchor = 0, textLen = 0, atEnd = false;
   var cols = 1, perView = 1, colW = 0, padL = 0;
-  function isPaged() { return readerOpen && Settings.get().mode === 'page' && !arcForceScroll; }
+  function isPaged() { return readerOpen && !editing && Settings.get().mode === 'page' && !arcForceScroll; }
   /** 양쪽 보기: 자동이면 두 쪽이 넉넉히 들어가는 넓은 화면(폴드 안쪽 화면 등)에서만. 바깥 화면·일반 폰은 한 쪽. */
   function spreadWanted() {
     var m = Settings.get().spread;
@@ -1079,6 +1150,12 @@
   });
 
   window.addEventListener('popstate', function (e) {
+    if (editing && !confirmLeaveEdit()) {
+      var stay = editEp;
+      if (stay) history.pushState({ view: 'ep', id: stay.id, cat: seqCat }, '', epUrl(stay));
+      return;
+    }
+    closeEdit();
     var s = e.state || {};
     if (s.view === 'arc' && s.stack && s.stack.length) { showArchive(s.stack, false); return; }
     if (s.view === 'arcfile' && s.stack && s.stack.length) { reopenArcFile(s.stack, s.fid); return; }
@@ -1303,6 +1380,8 @@
     $('reader').style.display = 'block';
     $('backBtn').style.display = 'inline-block';
     $('fb').style.display = 'none';
+    $('editBtn').hidden = true;
+    $('pbEdit').hidden = true;
     $('pbEnd').hidden = true;
     document.body.classList.add('arcfile');
     setNavText(NAV_ARC);

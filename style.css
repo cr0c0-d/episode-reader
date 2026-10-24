@@ -88,6 +88,8 @@ details.meta summary { cursor: pointer; padding: 12px 0; color: var(--muted); fo
   padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
 .fbrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .fbrow .st { flex: 1; color: var(--muted); font-size: 13px; }
+.fbrow.editjump { margin-top: 0; margin-bottom: 14px; }
+.fbrow.editjump button { flex: none; }
 .badge { margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--quote); color: var(--muted); }
 .countrow { display: flex; align-items: center; gap: 8px; }
 .countrow .count { flex: 1; }
@@ -109,6 +111,20 @@ body.selecting #home { padding-bottom: 90px; }
 .connect .cmsg { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
 .connect button { min-height: 48px; padding: 10px 20px; font-size: 16px; }
 #reader { display: none; }
+#editor { display: none; }
+body.editing #editor { display: block; }
+body.editing #pager,
+body.editing #after,
+body.editing #pageBar,
+body.editing #pageInfo { display: none !important; }
+.editnote { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 14px 0 10px; }
+#editBox { width: 100%; box-sizing: border-box; min-height: 68vh; resize: vertical;
+  font: 16px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.editbar { display: flex; align-items: center; gap: 8px; position: sticky; bottom: 0;
+  background: var(--bg); padding: 10px 0 calc(var(--sab) + 8px); }
+.editbar .st { flex: 1; color: var(--muted); font-size: 13px; }
+.editbar button { flex: none; }
 #pager, #flow { display: block; }
 #flowEnd { height: 0; }
 .endhead { display: none; }
