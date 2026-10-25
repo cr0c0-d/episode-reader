@@ -118,13 +118,26 @@ body.editing #after,
 body.editing #pageBar,
 body.editing #pageInfo { display: none !important; }
 .editnote { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 14px 0 10px; }
-#editBox { width: 100%; box-sizing: border-box; min-height: 68vh; resize: vertical;
+#editBox { width: 100%; box-sizing: border-box; min-height: 62vh; resize: vertical;
   font: 16px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
-.editbar { display: flex; align-items: center; gap: 8px; position: sticky; bottom: 0;
+.editpreview { font-family: var(--font); font-size: var(--fs); line-height: var(--lh); text-align: left;
+  word-break: keep-all; overflow-wrap: anywhere; min-height: 40vh;
+  border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--card); }
+.editpreview p { margin: 0 0 .8em; }
+.editpreview h1, .editpreview h2, .editpreview h3 { text-align: left; }
+.editstatus { color: var(--muted); font-size: 13px; line-height: 1.5; min-height: 1.5em; margin: 10px 0 0; }
+.editbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; position: sticky; bottom: 0;
   background: var(--bg); padding: 10px 0 calc(var(--sab) + 8px); }
-.editbar .st { flex: 1; color: var(--muted); font-size: 13px; }
-.editbar button { flex: none; }
+.editbar button { flex: 1 1 auto; }
+.fbhint { color: var(--muted); font-size: 13px; line-height: 1.5; margin: -4px 0 12px; }
+.quotebar { position: fixed; z-index: 32; left: 12px; right: 12px; bottom: calc(var(--sab) + 14px);
+  max-width: 640px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.22); }
+.quotebar p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; max-height: 4.6em; overflow: auto; }
+.quotebar .qrow { display: flex; gap: 8px; }
+.quotebar button { flex: 1; min-height: 42px; padding: 8px 4px; }
+body.paged.chrome .quotebar { bottom: calc(var(--sab) + 72px); }
 #pager, #flow { display: block; }
 #flowEnd { height: 0; }
 .endhead { display: none; }

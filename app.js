@@ -400,6 +400,7 @@
   function showHome(push, toArc) {
     if (editing && !confirmLeaveEdit()) return;
     closeEdit(false);
+    hideQuoteBar();
     flushFeedback();
     saveScroll();
     openSeqNo++;
@@ -439,6 +440,7 @@
     if (i < 0 || i >= episodes.length) return;
     if (editing && !confirmLeaveEdit()) return;
     closeEdit(false);
+    hideQuoteBar();
     p = normPos(p);
     if (selecting) { selecting = false; selected = {}; document.body.classList.remove('selecting'); $('selBtn').textContent = '여러 편 선택'; }
     flushFeedback();
@@ -741,11 +743,21 @@
   });
 
   // ---------- 본문 교정 (독자 반응·재독 피드백 꼬리는 유지) ----------
-  var editing = false, editBody = '', editEp = null;
+  var editing = false, editBody = '', editEp = null, editSeen = false, editPreviewOn = false, editUndo = null;
   function editDirty() { return editing && $('editBox').value !== editBody; }
   function confirmLeaveEdit() {
     if (!editDirty()) return true;
     return window.confirm('고친 본문을 저장하지 않고 나갈까요?');
+  }
+  function resetEditChrome() {
+    editPreviewOn = false; editSeen = false;
+    $('editPreview').hidden = true; $('editPreview').innerHTML = '';
+    $('editBox').hidden = false;
+    $('editPreviewBtn').textContent = '미리보기';
+    $('editSave').textContent = '드라이브에 저장';
+    $('editSave').disabled = false;
+    $('editUndo').hidden = true;
+    editUndo = null;
   }
   function closeEdit() {
     if (!editing) return;
@@ -753,28 +765,57 @@
     editEp = null;
     document.body.classList.remove('editing');
     $('editor').hidden = true;
-    $('editSave').disabled = false;
+    resetEditChrome();
     applyLayout();
+  }
+  function showEditPreview(on) {
+    editPreviewOn = !!on;
+    if (editPreviewOn) {
+      var raw = $('editBox').value || '';
+      $('editPreview').innerHTML = raw.trim() ? DOMPurify.sanitize(marked.parse(raw)) : '<p class="editnote">(빈 본문)</p>';
+      $('editPreview').hidden = false;
+      $('editBox').hidden = true;
+      $('editPreviewBtn').textContent = '다시 고치기';
+      editSeen = true;
+      $('editSave').textContent = '이대로 저장';
+      window.scrollTo(0, 0);
+    } else {
+      $('editPreview').hidden = true; $('editPreview').innerHTML = '';
+      $('editBox').hidden = false;
+      $('editPreviewBtn').textContent = '미리보기';
+      $('editBox').focus();
+    }
+  }
+  function loadEditUndo(ep) {
+    editUndo = null; $('editUndo').hidden = true;
+    idb.get('undo:' + ep.id).then(function (u) {
+      if (!editing || !editEp || editEp.id !== ep.id) return;
+      if (!u || typeof u.body !== 'string' || u.body === $('editBox').value) return;
+      editUndo = u;
+      $('editUndo').hidden = false;
+    });
   }
   function startEdit() {
     if (editing || arcOpen || arcListing || pos < 0) return;
     var ep = episodes[seq[pos]];
     if (!ep) return;
     flushFeedback();
+    hideQuoteBar();
     var openBox = function (text) {
       if (pos < 0 || !episodes[seq[pos]] || episodes[seq[pos]].id !== ep.id) return;
       var parts = Core.splitEditable(text);
       editEp = ep;
       editBody = parts.body;
+      resetEditChrome();
       $('editBox').value = parts.body;
       $('editStatus').textContent = (ep.ids && ep.ids.length > 1) ? '같은 글의 사본도 함께 고칩니다.' : '';
-      $('editSave').disabled = false;
       editing = true;
       $('editor').hidden = false;
       document.body.classList.add('editing');
       applyLayout();
       window.scrollTo(0, 0);
       $('editBox').focus();
+      loadEditUndo(ep);
     };
     var md = cache[ep.id];
     if (md != null) openBox(md);
@@ -782,12 +823,17 @@
   }
   function saveEdit() {
     if (!editing || !editEp || $('editSave').disabled) return;
-    var ep = editEp, body = $('editBox').value;
-    if (body === editBody) { closeEdit(); return; }
+    var ep = editEp, body = $('editBox').value, previous = editBody;
+    if (body === previous) { closeEdit(); return; }
+    if (!editSeen) {
+      showEditPreview(true);
+      $('editStatus').textContent = '이렇게 보입니다. 맞으면 이대로 저장을 누르세요.';
+      return;
+    }
     $('editSave').disabled = true;
     $('editStatus').textContent = '저장 중…';
     Core.saveEpisodeBody({ id: ep.id, ids: ep.ids || [ep.id] }, body).then(function (res) {
-      editBody = Core.splitEditable(res.text).body;
+      if (res.changed) idb.put('undo:' + ep.id, { body: previous, at: Date.now() });
       var i = indexOfId(ep.id);
       closeEdit();
       toast(res.changed ? '본문을 저장했어요' : '바꿀 내용이 없어요');
@@ -797,6 +843,21 @@
       $('editStatus').textContent = '저장 실패: ' + errMsg(e);
     });
   }
+  $('editBox').addEventListener('input', function () {
+    if (!editing) return;
+    editSeen = false;
+    $('editSave').textContent = '드라이브에 저장';
+  });
+  $('editPreviewBtn').onclick = function () { if (editing) showEditPreview(!editPreviewOn); };
+  $('editUndo').onclick = function () {
+    if (!editing || !editUndo) return;
+    if (!window.confirm('편집 칸을 직전 본문으로 바꿀까요? 드라이브에는 저장을 눌러야 반영됩니다.')) return;
+    $('editBox').value = editUndo.body;
+    editSeen = false;
+    showEditPreview(false);
+    $('editSave').textContent = '드라이브에 저장';
+    $('editStatus').textContent = '직전 본문을 불러왔어요. 저장해야 드라이브에 반영됩니다.';
+  };
   $('editBtn').onclick = $('editBtnEnd').onclick = $('pbEdit').onclick = startEdit;
   $('editCancel').onclick = function () {
     if (!confirmLeaveEdit()) return;
@@ -921,6 +982,7 @@
     if (!silent) goPage(pageCount - 1, true);
   }
   function nextPage() {
+    hideQuoteBar();
     document.body.classList.remove('chrome');
     if (atEnd) { if (pos < seq.length - 1) next(); else toast('마지막 화예요.'); return; }
     if (page < pageCount - 1) { goPage(page + 1, true); return; }
@@ -929,6 +991,7 @@
     if (pos < seq.length - 1) next(); else toast('마지막 화예요.');
   }
   function prevPage() {
+    hideQuoteBar();
     document.body.classList.remove('chrome');
     if (atEnd) { hideEnd(); return; }
     if (page > 0) { goPage(page - 1, true); return; }
@@ -1074,6 +1137,7 @@
     if (interactive(e.target)) return;
     var sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed && String(sel).trim()) return;
+    hideQuoteBar();
     var fx = e.clientX / window.innerWidth;
     if (fx >= 0.6) nextPage();
     else if (fx < 0.3) prevPage();
@@ -1088,6 +1152,115 @@
   }, { passive: true });
   $('backToText').onclick = function () { hideEnd(); };
   $('pbEnd').onclick = showEnd;
+
+  // ---------- 문장을 눌러 피드백에 넣기 ----------
+  var quotePick = '', quoteTimer = null, quoteHold = null;
+  function hideQuoteBar() {
+    quotePick = '';
+    var bar = $('quoteBar');
+    if (bar) bar.hidden = true;
+  }
+  function showQuoteBar(text) {
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (text.length < 2 || arcOpen || editing) return;
+    if (text.length > 400) text = text.slice(0, 400).trim();
+    quotePick = text;
+    $('quoteText').textContent = text;
+    $('quoteBar').hidden = false;
+  }
+  function sentenceAround(text, off) {
+    var t = String(text || '');
+    if (!t.trim()) return '';
+    var i = Math.max(0, Math.min(off == null ? 0 : off, t.length));
+    function isEnd(k) {
+      var ch = t.charAt(k);
+      if (ch !== '.' && ch !== '?' && ch !== '!' && ch !== '…') return false;
+      var n = t.charAt(k + 1);
+      return !n || /[\s」"'’]/.test(n);
+    }
+    var start = 0;
+    for (var a = i - 1; a >= 0; a--) {
+      if (t.charAt(a) === '\n' || isEnd(a)) { start = a + 1; break; }
+    }
+    var end = t.length;
+    for (var b = Math.max(i, start); b < t.length; b++) {
+      if (t.charAt(b) === '\n') { end = b; break; }
+      if (isEnd(b)) {
+        end = b + 1;
+        while (/[」"'’]/.test(t.charAt(end))) end++;
+        break;
+      }
+    }
+    return t.slice(start, end).replace(/\s+/g, ' ').trim();
+  }
+  function blockOf(node) {
+    var art = $('article'), el = node && node.nodeType === 1 ? node : node && node.parentNode;
+    while (el && el !== art && !/^(P|LI|BLOCKQUOTE|H1|H2|H3|H4|H5|H6|TD|FIGCAPTION)$/.test(el.tagName || '')) el = el.parentNode;
+    return el && el !== art ? el : (node && node.parentNode) || art;
+  }
+  function sentenceFromPoint(x, y) {
+    var c = caretAt(x, y);
+    if (!c || !$('article').contains(c.node)) return '';
+    var block = blockOf(c.node);
+    var r = document.createRange();
+    try { r.setStart(block, 0); r.setEnd(c.node, c.offset); }
+    catch (e) { return (block.textContent || '').replace(/\s+/g, ' ').trim(); }
+    return sentenceAround(block.textContent || '', r.toString().length);
+  }
+  function selectedInArticle() {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed) return '';
+    if (!$('article').contains(sel.anchorNode)) return '';
+    return String(sel).replace(/\s+/g, ' ').trim();
+  }
+  function addQuote(which) {
+    if (!quotePick || !fbEp) { hideQuoteBar(); return; }
+    var box = $(which === 'good' ? 'fbGood' : 'fbBad');
+    var line = '「' + quotePick + '」';
+    var cur = box.value.replace(/\s+$/, '');
+    if (cur.indexOf(line) !== -1) { toast('이미 들어가 있어요'); hideQuoteBar(); return; }
+    box.value = cur ? cur + '\n' + line : line;
+    hideQuoteBar();
+    scheduleFeedback(400);
+    toast(which === 'good' ? '좋았던 점에 넣었어요' : '아쉬웠던 점에 넣었어요');
+  }
+  $('quoteGood').onclick = function () { addQuote('good'); };
+  $('quoteBad').onclick = function () { addQuote('bad'); };
+  $('quoteClose').onclick = hideQuoteBar;
+  $('article').addEventListener('click', function (e) {
+    if (arcOpen || editing || isPaged() || interactive(e.target)) return;
+    var picked = selectedInArticle() || sentenceFromPoint(e.clientX, e.clientY);
+    if (picked) showQuoteBar(picked);
+  });
+  $('article').addEventListener('pointerdown', function (e) {
+    if (!isPaged() || arcOpen || editing || !e.isPrimary || interactive(e.target)) return;
+    quoteHold = { x: e.clientX, y: e.clientY };
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(function () {
+      quoteTimer = null;
+      var hold = quoteHold; quoteHold = null;
+      if (!hold) return;
+      swallowClickUntil = Date.now() + 700;
+      var picked = sentenceFromPoint(hold.x, hold.y);
+      if (picked) showQuoteBar(picked);
+    }, 480);
+  });
+  $('article').addEventListener('pointermove', function (e) {
+    if (!quoteHold) return;
+    if (Math.abs(e.clientX - quoteHold.x) > 12 || Math.abs(e.clientY - quoteHold.y) > 12) {
+      clearTimeout(quoteTimer); quoteTimer = null; quoteHold = null;
+    }
+  });
+  function clearQuoteHold() { clearTimeout(quoteTimer); quoteTimer = null; quoteHold = null; }
+  $('article').addEventListener('pointerup', function () {
+    clearQuoteHold();
+    setTimeout(function () {
+      if (!isPaged() || editing || arcOpen) return;
+      var picked = selectedInArticle();
+      if (picked && picked.length >= 2) { swallowClickUntil = Date.now() + 600; showQuoteBar(picked); }
+    }, 40);
+  });
+  $('article').addEventListener('pointercancel', clearQuoteHold);
 
   // 보기 설정이 바뀌면: 읽던 글자 위치를 기억했다가 다시 맞춘다.
   var LAYOUT_KEYS = ['font', 'fs', 'lh', 'ps', 'mx', 'align', 'indent', 'spread'];

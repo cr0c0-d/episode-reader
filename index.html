@@ -81,10 +81,13 @@
     <div id="flowEnd"></div>
   </div></div>
   <div id="editor" hidden>
-    <p class="editnote">본문만 고칩니다. 파일 끝의 독자 반응과 재독 피드백은 그대로 두고, 목록에 보이는 제목(파일 이름)은 바꾸지 않습니다.</p>
+    <p class="editnote">본문만 고칩니다. 저장을 누르면 먼저 미리보기가 나옵니다. 독자 반응·재독 피드백과 목록 제목은 바꾸지 않습니다.</p>
     <textarea id="editBox" spellcheck="true" aria-label="본문 마크다운"></textarea>
+    <div id="editPreview" class="editpreview" hidden></div>
+    <p class="st editstatus" id="editStatus"></p>
     <div class="editbar">
-      <span class="st" id="editStatus"></span>
+      <button id="editPreviewBtn" type="button">미리보기</button>
+      <button id="editUndo" type="button" hidden>직전 본문</button>
       <button id="editCancel" type="button">취소</button>
       <button id="editSave" type="button" class="primary">드라이브에 저장</button>
     </div>
@@ -96,6 +99,7 @@
       <div id="fbMain">
       <div class="fbrow editjump"><span class="st">오탈자나 문장을 고치려면</span><button id="editBtnEnd" type="button">본문 교정</button></div>
       <h3>다시 읽고 남기는 피드백</h3>
+      <p class="fbhint">본문의 문장을 누르면 아래에 넣을 수 있어요. 쪽 넘기기에서는 문장을 길게 누르세요.</p>
       <div class="rates">
         <button data-r="best">⭐ 최고</button>
         <button data-r="like">👍 좋아요</button>
@@ -119,6 +123,14 @@
 </div>
 
 <!-- 쪽 넘기기 모드 전용 -->
+<div id="quoteBar" class="quotebar" hidden>
+  <p id="quoteText"></p>
+  <div class="qrow">
+    <button id="quoteGood" type="button">좋았던 점</button>
+    <button id="quoteBad" type="button">아쉬웠던 점</button>
+    <button id="quoteClose" type="button">닫기</button>
+  </div>
+</div>
 <div id="pageBar" class="pagebar">
   <button id="pbPrev">← 이전 화</button>
   <button id="pbList">목록</button>
