@@ -1,5 +1,5 @@
 /* 앱 껍데기 캐시. 구글 API(드라이브·로그인) 응답은 절대 캐시하지 않는다. */
-var VERSION = 'v20';
+var VERSION = 'v21';
 var SHELL_CACHE = 'reader-shell-' + VERSION;
 var CDN_CACHE = 'reader-cdn-v1';     // 버전 고정 라이브러리·웹 글꼴
 var SHELL = [

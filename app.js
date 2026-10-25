@@ -1164,51 +1164,44 @@
     if (!el.dataset.qid) el.dataset.qid = String(++quoteSeq);
     return el.dataset.qid;
   }
-  function sentenceAround(text, off) {
-    var t = String(text || '');
-    if (!t.trim()) return null;
-    var i = Math.max(0, Math.min(off == null ? 0 : off, t.length));
-    function isEnd(k) {
-      var ch = t.charAt(k);
-      if (ch !== '.' && ch !== '?' && ch !== '!' && ch !== '…') return false;
-      var n = t.charAt(k + 1);
-      return !n || /[\s」"'’]/.test(n);
+  function linesInBlock(block) {
+    var lines = [], acc = 0, start = 0, buf = '';
+    function flush() {
+      var raw = buf;
+      buf = '';
+      if (!raw.trim()) return;
+      var lead = (raw.match(/^\s*/) || [''])[0].length;
+      var trail = (raw.match(/\s*$/) || [''])[0].length;
+      var body = raw.slice(lead, raw.length - trail).replace(/\s+/g, ' ').trim();
+      if (body.length < 2) return;
+      lines.push({ text: body, start: start + lead, end: start + raw.length - trail });
     }
-    var start = 0;
-    for (var a = i - 1; a >= 0; a--) {
-      if (t.charAt(a) === '\n') { start = a + 1; break; }
-      if (isEnd(a)) {
-        start = a + 1;
-        while (/[」"'’]/.test(t.charAt(start))) start++;
-        break;
+    function walk(node) {
+      if (node.nodeType === 3) {
+        var parts = node.data.split('\n');
+        for (var i = 0; i < parts.length; i++) {
+          if (!buf) start = acc;
+          buf += parts[i];
+          acc += parts[i].length;
+          if (i < parts.length - 1) { acc += 1; flush(); }
+        }
+        return;
       }
+      if (node.nodeName === 'BR') { flush(); return; }
+      for (var c = node.firstChild; c; c = c.nextSibling) walk(c);
     }
-    var end = t.length;
-    for (var b = Math.max(i, start); b < t.length; b++) {
-      if (t.charAt(b) === '\n') { end = b; break; }
-      if (isEnd(b)) {
-        end = b + 1;
-        while (/[」"'’]/.test(t.charAt(end))) end++;
-        break;
-      }
-    }
-    var raw = t.slice(start, end);
-    var lead = (raw.match(/^\s*/) || [''])[0].length;
-    var trail = (raw.match(/\s*$/) || [''])[0].length;
-    var body = raw.slice(lead, raw.length - trail).replace(/\s+/g, ' ').trim();
-    if (body.length < 2) return null;
-    return { text: body, start: start + lead, end: end - trail };
+    walk(block);
+    flush();
+    return lines;
   }
-  function sentencesInBlock(text) {
-    var out = [], i = 0, guard = 0;
-    while (i < text.length && guard++ < 400) {
-      if (!text.slice(i).trim()) break;
-      var s = sentenceAround(text, i);
-      if (!s) { i++; continue; }
-      out.push(s);
-      i = Math.max(s.end, i + 1);
+  function lineAt(lines, off) {
+    var best = null, dist = 1e9, i;
+    for (i = 0; i < lines.length; i++) {
+      if (off >= lines[i].start && off <= lines[i].end) return lines[i];
+      var d = off < lines[i].start ? lines[i].start - off : off - lines[i].end;
+      if (d < dist) { dist = d; best = lines[i]; }
     }
-    return out;
+    return best;
   }
   function blockOf(node) {
     var art = $('article'), el = node && node.nodeType === 1 ? node : node && node.parentNode;
@@ -1237,7 +1230,7 @@
     }
     var off = charOff(block, c.node, c.offset);
     if (off == null) return null;
-    return makePick(block, sentenceAround(block.textContent || '', off));
+    return makePick(block, lineAt(linesInBlock(block), off));
   }
   function sentencesFromSelection() {
     var sel = window.getSelection && window.getSelection();
@@ -1256,7 +1249,7 @@
       if (a == null) a = 0;
       if (b == null) b = full.length;
       if (b < a) { var tmp = a; a = b; b = tmp; }
-      sentencesInBlock(full).forEach(function (s) {
+      linesInBlock(block).forEach(function (s) {
         if (s.end <= a || s.start >= b) return;
         var p = makePick(block, s);
         if (p) picks.push(p);
@@ -1280,7 +1273,7 @@
       var pos = a.block.compareDocumentPosition(b.block);
       return pos & 4 ? -1 : 1;
     });
-    $('quoteText').textContent = (quotePicks.length > 1 ? quotePicks.length + '문장\n' : '') + quotePicks.map(function (p) { return p.text; }).join('\n');
+    $('quoteText').textContent = (quotePicks.length > 1 ? quotePicks.length + '줄\n' : '') + quotePicks.map(function (p) { return p.text; }).join('\n');
     $('quoteBar').hidden = false;
     if (!(window.CSS && CSS.highlights && window.Highlight)) return;
     var ranges = [];
@@ -1302,7 +1295,7 @@
     var i = -1;
     for (var k = 0; k < quotePicks.length; k++) if (quotePicks[k].key === p.key) i = k;
     if (i >= 0) quotePicks.splice(i, 1);
-    else if (quotePicks.length >= QUOTE_MAX) { toast('한 번에 ' + QUOTE_MAX + '문장까지예요'); return; }
+    else if (quotePicks.length >= QUOTE_MAX) { toast('한 번에 ' + QUOTE_MAX + '줄까지예요'); return; }
     else quotePicks.push(p);
     paintQuotes();
   }
@@ -1314,7 +1307,7 @@
       if (quotePicks.length >= QUOTE_MAX) return;
       quotePicks.push(p); added++;
     });
-    if (list.length && added === 0 && quotePicks.length >= QUOTE_MAX) toast('한 번에 ' + QUOTE_MAX + '문장까지예요');
+    if (list.length && added === 0 && quotePicks.length >= QUOTE_MAX) toast('한 번에 ' + QUOTE_MAX + '줄까지예요');
     paintQuotes();
   }
   function clearSel() {
@@ -1335,7 +1328,7 @@
     var n = fresh.length;
     hideQuoteBar();
     scheduleFeedback(400);
-    toast(n > 1 ? n + '문장을 ' + (which === 'good' ? '좋았던 점' : '아쉬웠던 점') + '에 넣었어요' : (which === 'good' ? '좋았던 점에 넣었어요' : '아쉬웠던 점에 넣었어요'));
+    toast(n > 1 ? n + '줄을 ' + (which === 'good' ? '좋았던 점' : '아쉬웠던 점') + '에 넣었어요' : (which === 'good' ? '좋았던 점에 넣었어요' : '아쉬웠던 점에 넣었어요'));
   }
   $('quoteGood').onclick = function () { addQuote('good'); };
   $('quoteBad').onclick = function () { addQuote('bad'); };
