@@ -154,7 +154,7 @@
   var MARK = { best: '⭐', like: '👍', meh: '😐', dislike: '👎' };
 
   // ---------- 목록 ----------
-  function itemLi(i, cat) {
+  function itemLi(i, cat, snippet) {
     var ep = episodes[i];
     var li = document.createElement('li');
     if (lastRead && lastRead.id === ep.id) li.className = 'last';
@@ -176,6 +176,10 @@
       var c = document.createElement('span'); c.className = 'c';
       c.textContent = ep.cats.map(function (k) { return catName[k]; }).join(' · ');
       li.querySelector('.t').appendChild(c);
+    }
+    if (snippet) {
+      var sn = document.createElement('span'); sn.className = 'c'; sn.textContent = snippet;
+      li.querySelector('.t').appendChild(sn);
     }
     li.onclick = function () {
       if (longPressed) { longPressed = false; return; }
@@ -244,15 +248,34 @@
 
     if (q) {
       var pool = srcIdx();   // 검색도 고른 출처 안에서
-      var hits = pool.filter(function (i) {
+      var titleHits = [];
+      var bodyHits = [];
+      pool.forEach(function (i) {
         var ep = episodes[i];
-        return (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' ') + (ep.src ? ' ' + srcLabel(ep.src) + ' ' + badgeOf(ep.src) : ''))
-          .toLowerCase().indexOf(q) !== -1;
+        var title = (ep.num + ' ' + ep.title + ' ' + ep.cats.map(function (k) { return catName[k]; }).join(' ') + (ep.src ? ' ' + srcLabel(ep.src) + ' ' + badgeOf(ep.src) : '')).toLowerCase();
+        if (title.indexOf(q) !== -1) titleHits.push(i);
+        else {
+          var snip = bodySnippet(ep, q);
+          if (snip) bodyHits.push({ i: i, snip: snip });
+        }
       });
-      hits.forEach(function (i) { ul.appendChild(itemLi(i, null)); });
-      $('count').textContent = sp + hits.length + '편 찾음 / 전체 ' + pool.length + '편';
+      titleHits.forEach(function (i) { ul.appendChild(itemLi(i, null)); });
+      bodyHits.slice(0, 40).forEach(function (h) { ul.appendChild(itemLi(h.i, null, h.snip)); });
+      var indexed = 0;
+      pool.forEach(function (i) { var rec = bodyIndex[episodes[i].id]; if (rec && rec.modified === episodes[i].modified) indexed++; });
+      var msg = sp + '제목 ' + titleHits.length + '편';
+      if (!/^\d+$/.test(q)) msg += ' · 본문 ' + Math.min(bodyHits.length, 40) + (bodyHits.length > 40 ? '편+' : '편');
+      msg += ' / ' + pool.length + '편';
+      $('count').textContent = msg;
+      if (/^\d+$/.test(q)) $('searchNote').textContent = '';
+      else if (indexed < pool.length) $('searchNote').textContent = '본문 색인 ' + indexed + '/' + pool.length + '편. 나머지를 받는 중이에요.';
+      else $('searchNote').textContent = bodyHits.length ? '본문에서 찾은 줄입니다.' : '받아 둔 본문에는 없습니다.';
+      if (!/^\d+$/.test(q)) fillBodyIndex(pool);
+      else stopBodyIndex();
       return;
     }
+    stopBodyIndex();
+    $('searchNote').textContent = '';
 
     if (view === 'groups') {
       var openSet = {};
@@ -300,7 +323,88 @@
     if (m) parts.push('평범 ' + m); if (d) parts.push('별로 ' + d); if (n) parts.push('소설 아님 ' + n);
     return parts.length ? ' · 숨김: ' + parts.join(', ') : '';
   }
-  $('search').addEventListener('input', renderHome);
+  var searchTimer = null;
+  $('search').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderHome, 140);
+  });
+
+  // ---------- 본문 검색 색인 ----------
+  var bodyIndex = {}, bodyIndexP = null, bodyJob = 0, bodyRunning = false, bodyRunKey = '', bodyHold = false;
+  function bodyIndexReady() {
+    if (!bodyIndexP) {
+      bodyIndexP = idb.get('bodyIndex').then(function (saved) {
+        if (saved && typeof saved === 'object') bodyIndex = saved;
+        return bodyIndex;
+      }, function () { return bodyIndex; });
+    }
+    return bodyIndexP;
+  }
+  var bodySaveTimer = null;
+  function rememberBody(id, md, modified) {
+    if (!id || md == null || !Core.splitEditable) return;
+    var text = Core.splitEditable(md).body;
+    var prev = bodyIndex[id];
+    if (prev && prev.modified === modified && prev.text === text) return;
+    bodyIndex[id] = { modified: modified || '', text: text };
+    clearTimeout(bodySaveTimer);
+    bodySaveTimer = setTimeout(function () { idb.put('bodyIndex', bodyIndex); }, 700);
+  }
+  function bodySnippet(ep, q) {
+    var rec = bodyIndex[ep.id];
+    if (!rec || rec.modified !== ep.modified || !rec.text) return '';
+    var at = rec.text.toLowerCase().indexOf(q);
+    if (at < 0) return '';
+    var from = Math.max(0, at - 20);
+    var raw = rec.text.slice(from, at + q.length + 48).replace(/\s+/g, ' ').trim();
+    return (from ? '…' : '') + raw + (at + q.length + 48 < rec.text.length ? '…' : '');
+  }
+  function stopBodyIndex() { bodyJob++; bodyRunning = false; bodyRunKey = ''; }
+  function fillBodyIndex(pool) {
+    if (bodyHold) return;
+    var key = pool.length + ':' + (pool.length ? episodes[pool[0]].id : '') + ':' + (pool.length ? episodes[pool[pool.length - 1]].id : '');
+    if (bodyRunning && bodyRunKey === key) return;
+    var job = ++bodyJob;
+    bodyRunning = true;
+    bodyRunKey = key;
+    function refreshSearch() {
+      bodyHold = true;
+      bodyRunning = false;
+      renderHome();
+      bodyHold = false;
+    }
+    bodyIndexReady().then(function () {
+      if (job !== bodyJob) return;
+      var pending = pool.filter(function (i) {
+        var ep = episodes[i], rec = bodyIndex[ep.id];
+        return !rec || rec.modified !== ep.modified;
+      });
+      function step() {
+        if (job !== bodyJob) return;
+        var qnow = $('search').value.trim().toLowerCase();
+        if (!qnow || /^\d+$/.test(qnow)) { bodyRunning = false; return; }
+        var batch = pending.splice(0, 2);
+        if (!batch.length) { refreshSearch(); return; }
+        Promise.all(batch.map(function (i) {
+          var ep = episodes[i];
+          return loadContent(ep, true).then(function (md) { rememberBody(ep.id, md, ep.modified); }, function () {});
+        })).then(function () {
+          if (job !== bodyJob) return;
+          var got = batch.some(function (i) { return bodySnippet(episodes[i], qnow); });
+          var indexed = pool.length - pending.length;
+          if ($('searchNote')) $('searchNote').textContent = '본문 색인 ' + indexed + '/' + pool.length + '편. 나머지를 받는 중이에요.';
+          if (got) renderHome();
+          setTimeout(step, 60);
+        }, function () { if (job === bodyJob) setTimeout(step, 300); });
+      }
+      if (!pending.length) {
+        bodyRunning = false;
+        if ($('searchNote') && $('searchNote').textContent.indexOf('받는 중') !== -1) refreshSearch();
+        return;
+      }
+      else step();
+    });
+  }
 
   // ---------- 여러 편 선택 ----------
   var selecting = false, selected = {}, longPressed = false;
@@ -520,11 +624,12 @@
   /** 본문 읽기: IndexedDB 저장본이 드라이브 수정 시각과 같으면 그대로, 아니면 새로 받는다. */
   function loadContent(ep, background) {
     return idb.get('c:' + ep.id).then(function (hit) {
-      if (hit && hit.modified === ep.modified) return hit.md;
+      if (hit && hit.modified === ep.modified) { rememberBody(ep.id, hit.md, ep.modified); return hit.md; }
       if (hit && (!navigator.onLine || !Drive.hasValidToken())) return hit.md;   // 오프라인·연결 만료: 저장본 먼저
       if (background && !Drive.hasValidToken()) throw new Error('skip');
       return Core.getEpisodeContent(ep.id).then(function (md) {
         idb.put('c:' + ep.id, { md: md, modified: ep.modified });
+        rememberBody(ep.id, md, ep.modified);
         return md;
       }, function (e) { if (hit) return hit.md; throw e; });
     });
@@ -542,6 +647,7 @@
     if (modified) episodes[i].modified = modified;
     cache[id] = text;
     idb.put('c:' + id, { md: text, modified: episodes[i].modified });
+    rememberBody(id, text, episodes[i].modified);
   };
 
   // ---------- 마지막으로 읽은 화 ----------
@@ -1116,6 +1222,7 @@
   var pd = null, swallowClickUntil = 0, wheelAt = 0;
   function interactive(t) { return !!(t && t.closest && t.closest('button, a, input, textarea, select, summary, details, label')); }
   $('reader').addEventListener('pointerdown', function (e) {
+    if (!$('lineEdit').hidden) return;
     if (!isPaged() || !e.isPrimary) return;
     if (e.target.closest('textarea, input')) { pd = null; return; }
     pd = { x: e.clientX, y: e.clientY, t: Date.now() };
@@ -1130,6 +1237,7 @@
     }
   });
   $('reader').addEventListener('click', function (e) {
+    if (!$('lineEdit').hidden) return;
     if (!isPaged() || atEnd) return;
     if (Date.now() < swallowClickUntil) return;
     if (interactive(e.target)) return;
@@ -1159,6 +1267,7 @@
     var bar = $('quoteBar');
     if (bar) bar.hidden = true;
     if ($('quoteText')) $('quoteText').textContent = '';
+    closeLineEdit();
   }
   function qid(el) {
     if (!el.dataset.qid) el.dataset.qid = String(++quoteSeq);
@@ -1333,14 +1442,132 @@
   $('quoteGood').onclick = function () { addQuote('good'); };
   $('quoteBad').onclick = function () { addQuote('bad'); };
   $('quoteClose').onclick = hideQuoteBar;
+  function normLine(s) {
+    return String(s || '').replace(/^\s{0,3}#{1,6}\s+/, '').replace(/^\s*>\s?/, '').replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+  function closeLineEdit() {
+    var box = $('lineEdit');
+    if (!box) return;
+    box.hidden = true;
+    $('lineEditFields').innerHTML = '';
+    $('lineEditStatus').textContent = '';
+    $('lineEditSave').disabled = false;
+  }
+  function lineSpecs(picks) {
+    var seq = [], seen = {};
+    var nodes = $('article').querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6, td, figcaption');
+    Array.prototype.forEach.call(nodes, function (block) {
+      if (block.querySelector('p, li, blockquote')) return;
+      linesInBlock(block).forEach(function (s) {
+        var key = qid(block) + ':' + s.start;
+        var want = normLine(s.text);
+        var nth = seen[want] || 0;
+        seen[want] = nth + 1;
+        seq.push({ key: key, nth: nth, want: want });
+      });
+    });
+    var byKey = {};
+    seq.forEach(function (s) { byKey[s.key] = s; });
+    return picks.map(function (p) {
+      var hit = byKey[p.key] || { nth: 0, want: normLine(p.text) };
+      return { want: hit.want, nth: hit.nth, shown: p.text };
+    });
+  }
+  function openLineEdit() {
+    if (!quotePicks.length || arcOpen || pos < 0) return;
+    var ep = episodes[seq[pos]];
+    if (!ep) return;
+    var specs = lineSpecs(quotePicks);
+    var go = function (md) {
+      var body = Core.splitEditable(md).body;
+      var lines = body.split(/\r?\n/);
+      $('lineEditFields').innerHTML = '';
+      var missing = 0;
+      specs.forEach(function (s) {
+        var seen = 0, found = '';
+        for (var i = 0; i < lines.length; i++) {
+          if (normLine(lines[i]) !== s.want) continue;
+          if (seen === s.nth) { found = lines[i]; break; }
+          seen++;
+        }
+        var ta = document.createElement('textarea');
+        ta.value = found || s.shown;
+        ta.dataset.want = s.want;
+        ta.dataset.nth = String(s.nth);
+        ta.dataset.orig = ta.value;
+        if (!found) { ta.disabled = true; missing++; }
+        $('lineEditFields').appendChild(ta);
+      });
+      $('quoteBar').hidden = true;
+      $('lineEdit').hidden = false;
+      $('lineEditStatus').textContent = missing ? '일부 줄은 원문에서 찾지 못했어요.' : '나온 그대로 고치고 저장하세요.';
+      var first = $('lineEditFields').querySelector('textarea');
+      if (first) first.focus();
+    };
+    var md = cache[ep.id];
+    if (md != null) go(md);
+    else loadContent(ep).then(go, function (e) { toast('본문을 불러오지 못했어요. ' + errMsg(e)); });
+  }
+  function saveLineEdits() {
+    if ($('lineEditSave').disabled || pos < 0) return;
+    var ep = episodes[seq[pos]];
+    var fields = $('lineEditFields').querySelectorAll('textarea');
+    var edits = [], changed = false;
+    Array.prototype.forEach.call(fields, function (ta) {
+      if (ta.disabled) return;
+      var next = ta.value.replace(/\s+$/, '').replace(/\r?\n/g, ' ');
+      if (next !== ta.dataset.orig) changed = true;
+      edits.push({ want: ta.dataset.want, nth: Number(ta.dataset.nth), next: next, orig: ta.dataset.orig });
+    });
+    if (!changed) { closeLineEdit(); hideQuoteBar(); return; }
+    var apply = function (md) {
+      var parts = Core.splitEditable(md);
+      var lines = parts.body.split(/\r?\n/);
+      var plan = [];
+      edits.forEach(function (ed) {
+        if (ed.next === ed.orig) return;
+        var seen = 0;
+        for (var i = 0; i < lines.length; i++) {
+          if (normLine(lines[i]) !== ed.want) continue;
+          if (seen === ed.nth) { plan.push({ i: i, next: ed.next }); return; }
+          seen++;
+        }
+      });
+      if (!plan.length) { $('lineEditStatus').textContent = '원문에서 줄을 찾지 못했어요.'; return; }
+      plan.forEach(function (p) { lines[p.i] = p.next; });
+      $('lineEditSave').disabled = true;
+      $('lineEditStatus').textContent = '저장 중…';
+      idb.put('undo:' + ep.id, { body: parts.body, at: Date.now() });
+      Core.saveEpisodeBody({ id: ep.id, ids: ep.ids || [ep.id] }, lines.join('\n')).then(function () {
+        var back = isPaged() ? { frac: textLen ? curAnchor / textLen : 0, mode: 'page' } : { scroll: window.scrollY };
+        var i = indexOfId(ep.id);
+        closeLineEdit();
+        hideQuoteBar();
+        toast(plan.length > 1 ? plan.length + '줄을 고쳤어요' : '줄을 고쳤어요');
+        if (i >= 0) openEpisode(i, seqCat, false, back);
+      }, function (e) {
+        $('lineEditSave').disabled = false;
+        $('lineEditStatus').textContent = '저장 실패: ' + errMsg(e);
+      });
+    };
+    var md = cache[ep.id];
+    if (md != null) apply(md);
+    else loadContent(ep).then(apply, function (e) { $('lineEditStatus').textContent = '저장 실패: ' + errMsg(e); });
+  }
+  $('quoteEdit').onclick = openLineEdit;
+  $('lineEditCancel').onclick = function () {
+    closeLineEdit();
+    if (quotePicks.length) $('quoteBar').hidden = false;
+  };
+  $('lineEditSave').onclick = saveLineEdits;
   $('article').addEventListener('click', function (e) {
-    if (arcOpen || editing || isPaged() || interactive(e.target)) return;
+    if (!$('lineEdit').hidden || arcOpen || editing || isPaged() || interactive(e.target)) return;
     var many = sentencesFromSelection();
     if (many.length) { addPicks(many); clearSel(); return; }
     togglePick(sentenceFromPoint(e.clientX, e.clientY));
   });
   $('article').addEventListener('pointerdown', function (e) {
-    if (!isPaged() || arcOpen || editing || !e.isPrimary || interactive(e.target)) return;
+    if (!$('lineEdit').hidden || !isPaged() || arcOpen || editing || !e.isPrimary || interactive(e.target)) return;
     quoteLong = false;
     quoteHold = { x: e.clientX, y: e.clientY };
     clearTimeout(quoteTimer);
@@ -1791,6 +2018,7 @@
         || Core.retiredSource(x.path) || Core.retiredSource(x.title);
     }
     episodes = (data.episodes || []).filter(function (e) { return !hiddenSrc(e); });
+    bodyIndexReady();
     categories = (data.categories || []).filter(function (c) { return !hiddenSrc(c); });
     catName = {};
     categories.forEach(function (c) { catName[c.key] = c.name; });

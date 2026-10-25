@@ -46,7 +46,8 @@
   </div>
   <div id="resume" class="resume"><small>이어 읽기</small><span id="resumeTitle"></span></div>
   <div id="srcTabs" class="srctabs" role="tablist" aria-label="만든 곳" hidden></div>
-  <input id="search" class="search" type="search" placeholder="번호나 제목으로 찾기">
+  <input id="search" class="search" type="search" placeholder="번호, 제목, 본문에서 찾기">
+  <p id="searchNote" class="syncnote"></p>
   <div id="chips" class="chips"></div>
   <div class="countrow"><div id="count" class="count"></div><button id="selBtn">여러 편 선택</button></div>
   <div id="syncNote" class="syncnote"></div>
@@ -128,7 +129,17 @@
   <div class="qrow">
     <button id="quoteGood" type="button">좋았던 점</button>
     <button id="quoteBad" type="button">아쉬웠던 점</button>
+    <button id="quoteEdit" type="button">줄 고치기</button>
     <button id="quoteClose" type="button">닫기</button>
+  </div>
+</div>
+<div id="lineEdit" class="lineedit" hidden>
+  <p class="editnote">고른 줄만 바꿉니다. 다른 줄과 독자 반응·재독 피드백은 그대로입니다.</p>
+  <div id="lineEditFields"></div>
+  <p class="st editstatus" id="lineEditStatus"></p>
+  <div class="editbar">
+    <button id="lineEditCancel" type="button">취소</button>
+    <button id="lineEditSave" type="button" class="primary">이 줄 저장</button>
   </div>
 </div>
 <div id="pageBar" class="pagebar">

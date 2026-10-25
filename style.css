@@ -136,9 +136,15 @@ body.editing #pageInfo { display: none !important; }
   padding: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.22); }
 .quotebar p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; max-height: 7.5em; overflow: auto; white-space: pre-wrap; }
 ::highlight(picked) { background-color: #e4c56a; color: #1a1408; }
-.quotebar .qrow { display: flex; gap: 8px; }
+.quotebar .qrow { display: flex; flex-wrap: wrap; gap: 8px; }
 .quotebar button { flex: 1; min-height: 42px; padding: 8px 4px; }
-body.paged.chrome .quotebar { bottom: calc(var(--sab) + 72px); }
+.lineedit { position: fixed; z-index: 34; left: 12px; right: 12px; bottom: calc(var(--sab) + 14px);
+  max-width: 640px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.22); max-height: 72vh; overflow: auto; }
+.lineedit textarea { width: 100%; box-sizing: border-box; min-height: 74px; margin: 0 0 8px; resize: vertical;
+  font: 16px/1.55 var(--font); padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); }
+body.paged .lineedit, body.paged.chrome .quotebar { bottom: calc(var(--sab) + 72px); }
 #pager, #flow { display: block; }
 #flowEnd { height: 0; }
 .endhead { display: none; }
