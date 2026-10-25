@@ -982,7 +982,6 @@
     if (!silent) goPage(pageCount - 1, true);
   }
   function nextPage() {
-    hideQuoteBar();
     document.body.classList.remove('chrome');
     if (atEnd) { if (pos < seq.length - 1) next(); else toast('마지막 화예요.'); return; }
     if (page < pageCount - 1) { goPage(page + 1, true); return; }
@@ -991,7 +990,6 @@
     if (pos < seq.length - 1) next(); else toast('마지막 화예요.');
   }
   function prevPage() {
-    hideQuoteBar();
     document.body.classList.remove('chrome');
     if (atEnd) { hideEnd(); return; }
     if (page > 0) { goPage(page - 1, true); return; }
@@ -1137,7 +1135,6 @@
     if (interactive(e.target)) return;
     var sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed && String(sel).trim()) return;
-    hideQuoteBar();
     var fx = e.clientX / window.innerWidth;
     if (fx >= 0.6) nextPage();
     else if (fx < 0.3) prevPage();
@@ -1154,23 +1151,22 @@
   $('pbEnd').onclick = showEnd;
 
   // ---------- 문장을 눌러 피드백에 넣기 ----------
-  var quotePick = '', quoteTimer = null, quoteHold = null;
+  var quotePicks = [], quoteTimer = null, quoteHold = null, quoteSeq = 0, quoteLong = false;
+  var QUOTE_MAX = 12;
   function hideQuoteBar() {
-    quotePick = '';
+    quotePicks = [];
+    if (window.CSS && CSS.highlights) CSS.highlights.delete('picked');
     var bar = $('quoteBar');
     if (bar) bar.hidden = true;
+    if ($('quoteText')) $('quoteText').textContent = '';
   }
-  function showQuoteBar(text) {
-    text = String(text || '').replace(/\s+/g, ' ').trim();
-    if (text.length < 2 || arcOpen || editing) return;
-    if (text.length > 400) text = text.slice(0, 400).trim();
-    quotePick = text;
-    $('quoteText').textContent = text;
-    $('quoteBar').hidden = false;
+  function qid(el) {
+    if (!el.dataset.qid) el.dataset.qid = String(++quoteSeq);
+    return el.dataset.qid;
   }
   function sentenceAround(text, off) {
     var t = String(text || '');
-    if (!t.trim()) return '';
+    if (!t.trim()) return null;
     var i = Math.max(0, Math.min(off == null ? 0 : off, t.length));
     function isEnd(k) {
       var ch = t.charAt(k);
@@ -1180,7 +1176,12 @@
     }
     var start = 0;
     for (var a = i - 1; a >= 0; a--) {
-      if (t.charAt(a) === '\n' || isEnd(a)) { start = a + 1; break; }
+      if (t.charAt(a) === '\n') { start = a + 1; break; }
+      if (isEnd(a)) {
+        start = a + 1;
+        while (/[」"'’]/.test(t.charAt(start))) start++;
+        break;
+      }
     }
     var end = t.length;
     for (var b = Math.max(i, start); b < t.length; b++) {
@@ -1191,58 +1192,172 @@
         break;
       }
     }
-    return t.slice(start, end).replace(/\s+/g, ' ').trim();
+    var raw = t.slice(start, end);
+    var lead = (raw.match(/^\s*/) || [''])[0].length;
+    var trail = (raw.match(/\s*$/) || [''])[0].length;
+    var body = raw.slice(lead, raw.length - trail).replace(/\s+/g, ' ').trim();
+    if (body.length < 2) return null;
+    return { text: body, start: start + lead, end: end - trail };
+  }
+  function sentencesInBlock(text) {
+    var out = [], i = 0, guard = 0;
+    while (i < text.length && guard++ < 400) {
+      if (!text.slice(i).trim()) break;
+      var s = sentenceAround(text, i);
+      if (!s) { i++; continue; }
+      out.push(s);
+      i = Math.max(s.end, i + 1);
+    }
+    return out;
   }
   function blockOf(node) {
     var art = $('article'), el = node && node.nodeType === 1 ? node : node && node.parentNode;
     while (el && el !== art && !/^(P|LI|BLOCKQUOTE|H1|H2|H3|H4|H5|H6|TD|FIGCAPTION)$/.test(el.tagName || '')) el = el.parentNode;
     return el && el !== art ? el : (node && node.parentNode) || art;
   }
+  function makePick(block, s) {
+    if (!block || !s || !s.text) return null;
+    return { key: qid(block) + ':' + s.start, text: s.text, block: block, start: s.start, end: s.end };
+  }
+  function charOff(block, node, offset) {
+    if (!block.contains(node)) return null;
+    var r = document.createRange();
+    try { r.setStart(block, 0); r.setEnd(node, offset); }
+    catch (e) { return null; }
+    return r.toString().length;
+  }
   function sentenceFromPoint(x, y) {
     var c = caretAt(x, y);
-    if (!c || !$('article').contains(c.node)) return '';
+    if (!c || !$('article').contains(c.node)) return null;
     var block = blockOf(c.node);
-    var r = document.createRange();
-    try { r.setStart(block, 0); r.setEnd(c.node, c.offset); }
-    catch (e) { return (block.textContent || '').replace(/\s+/g, ' ').trim(); }
-    return sentenceAround(block.textContent || '', r.toString().length);
+    if (block.querySelector && block.querySelector('p, li, blockquote')) {
+      var inner = c.node.nodeType === 1 ? c.node : c.node.parentNode;
+      var tighter = blockOf(inner);
+      if (tighter && tighter !== block) block = tighter;
+    }
+    var off = charOff(block, c.node, c.offset);
+    if (off == null) return null;
+    return makePick(block, sentenceAround(block.textContent || '', off));
   }
-  function selectedInArticle() {
+  function sentencesFromSelection() {
     var sel = window.getSelection && window.getSelection();
-    if (!sel || sel.isCollapsed) return '';
-    if (!$('article').contains(sel.anchorNode)) return '';
-    return String(sel).replace(/\s+/g, ' ').trim();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return [];
+    var range = sel.getRangeAt(0);
+    var art = $('article');
+    if (!art.contains(range.startContainer) || !art.contains(range.endContainer)) return [];
+    var nodes = art.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6, td, figcaption');
+    var picks = [];
+    Array.prototype.forEach.call(nodes, function (block) {
+      if (block.querySelector('p, li, blockquote')) return;
+      if (!range.intersectsNode(block)) return;
+      var full = block.textContent || '';
+      var a = block.contains(range.startContainer) ? charOff(block, range.startContainer, range.startOffset) : 0;
+      var b = block.contains(range.endContainer) ? charOff(block, range.endContainer, range.endOffset) : full.length;
+      if (a == null) a = 0;
+      if (b == null) b = full.length;
+      if (b < a) { var tmp = a; a = b; b = tmp; }
+      sentencesInBlock(full).forEach(function (s) {
+        if (s.end <= a || s.start >= b) return;
+        var p = makePick(block, s);
+        if (p) picks.push(p);
+      });
+    });
+    return picks;
+  }
+  function pointAt(block, charOff) {
+    var w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), n, acc = 0;
+    while ((n = w.nextNode())) {
+      if (acc + n.data.length >= charOff) return { node: n, offset: Math.max(0, charOff - acc) };
+      acc += n.data.length;
+    }
+    return n ? { node: n, offset: n.data.length } : null;
+  }
+  function paintQuotes() {
+    if (window.CSS && CSS.highlights) CSS.highlights.delete('picked');
+    if (!quotePicks.length) { $('quoteBar').hidden = true; $('quoteText').textContent = ''; return; }
+    quotePicks.sort(function (a, b) {
+      if (a.block === b.block) return a.start - b.start;
+      var pos = a.block.compareDocumentPosition(b.block);
+      return pos & 4 ? -1 : 1;
+    });
+    $('quoteText').textContent = (quotePicks.length > 1 ? quotePicks.length + '문장\n' : '') + quotePicks.map(function (p) { return p.text; }).join('\n');
+    $('quoteBar').hidden = false;
+    if (!(window.CSS && CSS.highlights && window.Highlight)) return;
+    var ranges = [];
+    quotePicks.forEach(function (p) {
+      if (!p.block || !p.block.isConnected) return;
+      var a = pointAt(p.block, p.start), b = pointAt(p.block, p.end);
+      if (!a || !b) return;
+      var r = document.createRange();
+      try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); ranges.push(r); } catch (e) {}
+    });
+    if (ranges.length) {
+      var hl = new Highlight();
+      ranges.forEach(function (r) { hl.add(r); });
+      CSS.highlights.set('picked', hl);
+    }
+  }
+  function togglePick(p) {
+    if (!p) return;
+    var i = -1;
+    for (var k = 0; k < quotePicks.length; k++) if (quotePicks[k].key === p.key) i = k;
+    if (i >= 0) quotePicks.splice(i, 1);
+    else if (quotePicks.length >= QUOTE_MAX) { toast('한 번에 ' + QUOTE_MAX + '문장까지예요'); return; }
+    else quotePicks.push(p);
+    paintQuotes();
+  }
+  function addPicks(list) {
+    var added = 0;
+    list.forEach(function (p) {
+      if (!p) return;
+      for (var k = 0; k < quotePicks.length; k++) if (quotePicks[k].key === p.key) return;
+      if (quotePicks.length >= QUOTE_MAX) return;
+      quotePicks.push(p); added++;
+    });
+    if (list.length && added === 0 && quotePicks.length >= QUOTE_MAX) toast('한 번에 ' + QUOTE_MAX + '문장까지예요');
+    paintQuotes();
+  }
+  function clearSel() {
+    var sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
   }
   function addQuote(which) {
-    if (!quotePick || !fbEp) { hideQuoteBar(); return; }
+    if (!quotePicks.length || !fbEp) { hideQuoteBar(); return; }
     var box = $(which === 'good' ? 'fbGood' : 'fbBad');
-    var line = '「' + quotePick + '」';
     var cur = box.value.replace(/\s+$/, '');
-    if (cur.indexOf(line) !== -1) { toast('이미 들어가 있어요'); hideQuoteBar(); return; }
-    box.value = cur ? cur + '\n' + line : line;
+    var fresh = [];
+    quotePicks.forEach(function (p) {
+      var line = '「' + p.text + '」';
+      if (cur.indexOf(line) === -1 && fresh.indexOf(line) === -1) fresh.push(line);
+    });
+    if (!fresh.length) { toast('이미 들어가 있어요'); hideQuoteBar(); return; }
+    box.value = cur ? cur + '\n' + fresh.join('\n') : fresh.join('\n');
+    var n = fresh.length;
     hideQuoteBar();
     scheduleFeedback(400);
-    toast(which === 'good' ? '좋았던 점에 넣었어요' : '아쉬웠던 점에 넣었어요');
+    toast(n > 1 ? n + '문장을 ' + (which === 'good' ? '좋았던 점' : '아쉬웠던 점') + '에 넣었어요' : (which === 'good' ? '좋았던 점에 넣었어요' : '아쉬웠던 점에 넣었어요'));
   }
   $('quoteGood').onclick = function () { addQuote('good'); };
   $('quoteBad').onclick = function () { addQuote('bad'); };
   $('quoteClose').onclick = hideQuoteBar;
   $('article').addEventListener('click', function (e) {
     if (arcOpen || editing || isPaged() || interactive(e.target)) return;
-    var picked = selectedInArticle() || sentenceFromPoint(e.clientX, e.clientY);
-    if (picked) showQuoteBar(picked);
+    var many = sentencesFromSelection();
+    if (many.length) { addPicks(many); clearSel(); return; }
+    togglePick(sentenceFromPoint(e.clientX, e.clientY));
   });
   $('article').addEventListener('pointerdown', function (e) {
     if (!isPaged() || arcOpen || editing || !e.isPrimary || interactive(e.target)) return;
+    quoteLong = false;
     quoteHold = { x: e.clientX, y: e.clientY };
     clearTimeout(quoteTimer);
     quoteTimer = setTimeout(function () {
       quoteTimer = null;
       var hold = quoteHold; quoteHold = null;
       if (!hold) return;
+      quoteLong = true;
       swallowClickUntil = Date.now() + 700;
-      var picked = sentenceFromPoint(hold.x, hold.y);
-      if (picked) showQuoteBar(picked);
+      togglePick(sentenceFromPoint(hold.x, hold.y));
     }, 480);
   });
   $('article').addEventListener('pointermove', function (e) {
@@ -1255,9 +1370,9 @@
   $('article').addEventListener('pointerup', function () {
     clearQuoteHold();
     setTimeout(function () {
-      if (!isPaged() || editing || arcOpen) return;
-      var picked = selectedInArticle();
-      if (picked && picked.length >= 2) { swallowClickUntil = Date.now() + 600; showQuoteBar(picked); }
+      if (!isPaged() || editing || arcOpen || quoteLong) { quoteLong = false; return; }
+      var many = sentencesFromSelection();
+      if (many.length) { swallowClickUntil = Date.now() + 600; addPicks(many); clearSel(); }
     }, 40);
   });
   $('article').addEventListener('pointercancel', clearQuoteHold);
