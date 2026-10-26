@@ -976,6 +976,7 @@
   // page = 지금 보이는 화면(양쪽 보기면 두 쪽 묶음)의 번호, pageCount = 화면 수, cols = 전체 쪽 수
   var page = 0, pageCount = 1, pageStep = 0, curAnchor = 0, textLen = 0, atEnd = false;
   var cols = 1, perView = 1, colW = 0, padL = 0;
+  var quoteLift = 0;   // 문장 막대가 가리는 만큼 이번 쪽을 위로 올린다
   function isPaged() { return readerOpen && !editing && Settings.get().mode === 'page' && !arcForceScroll; }
   /** 양쪽 보기: 자동이면 두 쪽이 넉넉히 들어가는 넓은 화면(폴드 안쪽 화면 등)에서만. 바깥 화면·일반 폰은 한 쪽. */
   function spreadWanted() {
@@ -1023,7 +1024,7 @@
     document.documentElement.classList.toggle('paged-root', paged);
     document.body.classList.toggle('spread', paged && spreadWanted());
     if (!paged) {
-      document.body.classList.remove('chrome', 'atEnd'); atEnd = false;
+      document.body.classList.remove('chrome', 'atEnd', 'quoting'); atEnd = false; quoteLift = 0;
       var f = $('flow'); f.style.width = f.style.columnWidth = f.style.columnGap = f.style.columnCount = f.style.transform = '';
       resetPagerBox();
     }
@@ -1062,12 +1063,15 @@
     cols = Math.max(1, Math.floor((er.left - fr.left + 1) / colStep) + 1);
     pageCount = Math.max(1, Math.ceil(cols / perView));
     if (page > pageCount - 1) page = pageCount - 1;
-    flow.style.transform = 'translate3d(' + (-page * pageStep) + 'px,0,0)';
+    placeFlow();
     return pageCount;
+  }
+  function placeFlow() {
+    $('flow').style.transform = 'translate3d(' + (-page * pageStep) + 'px,' + (-quoteLift) + 'px,0)';
   }
   function goPage(n, user) {
     page = Math.max(0, Math.min(pageCount - 1, n));
-    $('flow').style.transform = 'translate3d(' + (-page * pageStep) + 'px,0,0)';
+    placeFlow();
     var a = page * perView + 1, b = Math.min(cols, a + perView - 1);
     $('pageNum').textContent = '쪽 ' + (a === b ? a : a + '–' + b) + ' / ' + cols;
     $('pageProg').style.width = ((page + 1) / pageCount * 100) + '%';
@@ -1080,11 +1084,13 @@
   function showEnd() {
     if (!isPaged()) { $('meta').scrollIntoView({ block: 'start' }); return; }
     atEnd = true; document.body.classList.add('atEnd'); document.body.classList.remove('chrome');
+    syncQuoteLift();
     $('after').scrollTop = 0;
   }
   function hideEnd(silent) {
     if (!atEnd && !document.body.classList.contains('atEnd')) return;
     atEnd = false; document.body.classList.remove('atEnd');
+    syncQuoteLift();
     if (!silent) goPage(pageCount - 1, true);
   }
   function nextPage() {
@@ -1108,6 +1114,7 @@
     applyLayout();   // 접고 펴면 양쪽 보기 여부도 다시 정한다
     paginate();
     goPage(pageOfChar(curAnchor));
+    syncQuoteLift();
   }
   var relayoutRaf = 0;
   function scheduleRelayout() {
@@ -1182,18 +1189,27 @@
   function probeAnchor() {
     if (!isPaged()) return probeAnchorScroll();
     if (page === 0) return 0;
-    var pr = $('pager').getBoundingClientRect();
-    var x0 = pr.left + padL, W = colW;   // 이 화면의 첫 쪽 왼쪽 위부터 짚어 본다
-    for (var dy = 2; dy < pr.height * 0.7; dy += 6) {
-      var xs = [2, W * 0.25, W * 0.5, W * 0.75];
-      for (var k = 0; k < xs.length; k++) {
-        var c = caretAt(x0 + xs[k], pr.top + dy);
-        if (!c) continue;
-        var off = offsetOf(c.node, c.offset);
-        if (off != null && pageOfChar(off) === page) return off;
-      }
+    var flow = $('flow'), prev = '';
+    if (quoteLift) {
+      prev = flow.style.transform;
+      flow.style.transform = 'translate3d(' + (-page * pageStep) + 'px,0,0)';
     }
-    return Math.round(page / pageCount * textLen);
+    try {
+      var pr = $('pager').getBoundingClientRect();
+      var x0 = pr.left + padL, W = colW;   // 이 화면의 첫 쪽 왼쪽 위부터 짚어 본다
+      for (var dy = 2; dy < pr.height * 0.7; dy += 6) {
+        var xs = [2, W * 0.25, W * 0.5, W * 0.75];
+        for (var k = 0; k < xs.length; k++) {
+          var c = caretAt(x0 + xs[k], pr.top + dy);
+          if (!c) continue;
+          var off = offsetOf(c.node, c.offset);
+          if (off != null && pageOfChar(off) === page) return off;
+        }
+      }
+      return Math.round(page / pageCount * textLen);
+    } finally {
+      if (quoteLift) flow.style.transform = prev;
+    }
   }
   function headerBottom() { var h = document.querySelector('header').getBoundingClientRect(); return Math.max(0, h.bottom); }
   function probeAnchorScroll() {
@@ -1268,6 +1284,21 @@
     if (bar) bar.hidden = true;
     if ($('quoteText')) $('quoteText').textContent = '';
     closeLineEdit();
+    syncQuoteLift();
+  }
+  function syncQuoteLift() {
+    var bar = $('quoteBar');
+    var next = 0;
+    if (bar && !bar.hidden && isPaged() && !atEnd) {
+      document.body.classList.add('quoting');
+      var br = bar.getBoundingClientRect();
+      var pr = $('pager').getBoundingClientRect();
+      var overlap = pr.bottom - br.top + 8;
+      if (overlap > 0) next = Math.min(Math.round(overlap), Math.round(pr.height * 0.46));
+    } else document.body.classList.remove('quoting');
+    if (next === quoteLift) return;
+    quoteLift = next;
+    if (isPaged() && pageStep) placeFlow();
   }
   function qid(el) {
     if (!el.dataset.qid) el.dataset.qid = String(++quoteSeq);
@@ -1376,7 +1407,7 @@
   }
   function paintQuotes() {
     if (window.CSS && CSS.highlights) CSS.highlights.delete('picked');
-    if (!quotePicks.length) { $('quoteBar').hidden = true; $('quoteText').textContent = ''; return; }
+    if (!quotePicks.length) { $('quoteBar').hidden = true; $('quoteText').textContent = ''; syncQuoteLift(); return; }
     quotePicks.sort(function (a, b) {
       if (a.block === b.block) return a.start - b.start;
       var pos = a.block.compareDocumentPosition(b.block);
@@ -1384,7 +1415,7 @@
     });
     $('quoteText').textContent = (quotePicks.length > 1 ? quotePicks.length + '줄\n' : '') + quotePicks.map(function (p) { return p.text; }).join('\n');
     $('quoteBar').hidden = false;
-    if (!(window.CSS && CSS.highlights && window.Highlight)) return;
+    if (!(window.CSS && CSS.highlights && window.Highlight)) { syncQuoteLift(); return; }
     var ranges = [];
     quotePicks.forEach(function (p) {
       if (!p.block || !p.block.isConnected) return;
@@ -1398,6 +1429,7 @@
       ranges.forEach(function (r) { hl.add(r); });
       CSS.highlights.set('picked', hl);
     }
+    syncQuoteLift();
   }
   function togglePick(p) {
     if (!p) return;
@@ -1500,6 +1532,7 @@
       });
       $('quoteBar').hidden = true;
       $('lineEdit').hidden = false;
+      syncQuoteLift();
       $('lineEditStatus').textContent = missing ? '일부 줄은 원문에서 찾지 못했어요.' : '나온 그대로 고치고 저장하세요.';
       var first = $('lineEditFields').querySelector('textarea');
       if (first) first.focus();
@@ -1558,6 +1591,7 @@
   $('lineEditCancel').onclick = function () {
     closeLineEdit();
     if (quotePicks.length) $('quoteBar').hidden = false;
+    syncQuoteLift();
   };
   $('lineEditSave').onclick = saveLineEdits;
   $('article').addEventListener('click', function (e) {

@@ -144,7 +144,10 @@ body.editing #pageInfo { display: none !important; }
 .lineedit textarea { width: 100%; box-sizing: border-box; min-height: 74px; margin: 0 0 8px; resize: vertical;
   font: 16px/1.55 var(--font); padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--bg); color: var(--fg); }
-body.paged .lineedit, body.paged.chrome .quotebar { bottom: calc(var(--sab) + 72px); }
+body.paged .lineedit { bottom: calc(var(--sab) + 72px); }
+body.paged .quotebar { bottom: calc(var(--sab) + 8px); padding: 8px 10px; }
+body.paged .quotebar p { max-height: 2.5em; margin-bottom: 8px; }
+body.paged .quotebar button { min-height: 38px; font-size: 13px; padding: 6px 2px; }
 #pager, #flow { display: block; }
 #flowEnd { height: 0; }
 .endhead { display: none; }
@@ -182,6 +185,7 @@ html.paged-root { overflow: hidden; height: 100%; }
 body.paged header { position: fixed; left: 0; right: 0; top: 0; transform: translateY(-105%); transition: transform .18s ease;
   padding-left: calc(var(--sal) + 12px); padding-right: calc(var(--sar) + 12px); }
 body.paged.chrome header, body.paged.atEnd header { transform: none; }
+body.paged.quoting header { transform: translateY(-105%); }
 body.paged #reader { position: fixed; inset: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; touch-action: none; }
 body.paged #navTop { display: none; }
 body.paged #pager { position: absolute; top: calc(var(--sat) + 22px); bottom: calc(var(--sab) + 32px);
@@ -211,6 +215,8 @@ body.paged .pagebar { display: flex; position: fixed; left: 0; right: 0; bottom:
   transform: translateY(105%); transition: transform .18s ease; }
 body.paged .pagebar button { flex: 1; font-size: 14px; padding: 8px 4px; min-height: 44px; white-space: nowrap; }
 body.paged.chrome .pagebar { transform: none; }
+body.paged.quoting .pagebar { transform: translateY(110%); }
+body.paged.quoting .pageinfo { visibility: hidden; }
 body.paged.atEnd .pagebar { display: none; }
 
 /* ---------- 연결 갱신 / 알림 ---------- */
