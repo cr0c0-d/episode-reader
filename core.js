@@ -899,7 +899,10 @@
     // 여러 줄 메모를 목록 안에서 깨지지 않게 들여쓴다.
     return t.replace(/\r/g, '').split('\n').join('\n  ');
   }
-  function pad3_(n) { return ('00' + n).slice(-3); }
+  function pad3_(n) {
+    var s = String(n);
+    return s.length > 3 ? s : ('00' + s).slice(-3);
+  }
 
   // ---------- 보관 폴더 (읽기 전용: 목록·내려받기만, 쓰기 없음) ----------
   var ARCHIVE_FIELDS = 'id, name, mimeType, modifiedTime, size';
