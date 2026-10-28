@@ -61,7 +61,7 @@
 <div id="archive" class="wrap" style="display:none">
   <nav id="arcCrumbs" class="crumbs" aria-label="위치"></nav>
   <div class="countrow"><div id="arcCount" class="count"></div><button id="arcRefresh">↻ 새로 고침</button></div>
-  <p class="arcro">읽기 전용이에요. 피드백이나 읽은 위치를 남기지 않아요.</p>
+  <p id="arcNote" class="arcro">읽기 전용이에요. 피드백이나 읽은 위치를 남기지 않아요.</p>
   <ul id="arcList" class="arclist"></ul>
   <div id="arcStatus" class="status"></div>
 </div>
@@ -82,7 +82,7 @@
     <div id="flowEnd"></div>
   </div></div>
   <div id="editor" hidden>
-    <p class="editnote">본문만 고칩니다. 저장을 누르면 먼저 미리보기가 나옵니다. 독자 반응·재독 피드백과 목록 제목은 바꾸지 않습니다.</p>
+    <p id="editNote" class="editnote">본문만 고칩니다. 저장을 누르면 먼저 미리보기가 나옵니다. 독자 반응·재독 피드백과 목록 제목은 바꾸지 않습니다.</p>
     <textarea id="editBox" spellcheck="true" aria-label="본문 마크다운"></textarea>
     <div id="editPreview" class="editpreview" hidden></div>
     <p class="st editstatus" id="editStatus"></p>

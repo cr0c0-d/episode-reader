@@ -563,6 +563,8 @@
     $('fb').style.display = '';
     $('editBtn').hidden = false;
     $('pbEdit').hidden = false;
+    $('editBtn').textContent = '교정';
+    $('pbEdit').textContent = '교정';
     $('headTitle').textContent = ep.num + '. ' + ep.title;
     $('endTitle').textContent = ep.num + '. ' + ep.title + ' · 끝';
     updateNav();
@@ -849,7 +851,9 @@
   });
 
   // ---------- 본문 교정 (독자 반응·재독 피드백 꼬리는 유지) ----------
-  var editing = false, editBody = '', editEp = null, editSeen = false, editPreviewOn = false, editUndo = null;
+  var editing = false, editBody = '', editEp = null, editArc = null, editSeen = false, editPreviewOn = false, editUndo = null;
+  var EP_EDIT_NOTE = '본문만 고칩니다. 저장을 누르면 먼저 미리보기가 나옵니다. 독자 반응·재독 피드백과 목록 제목은 바꾸지 않습니다.';
+  var ARC_EDIT_NOTE = '설정 파일 전체를 고칩니다. 저장하면 이 파일만 바뀌고, 다른 사본이나 백업은 건드리지 않습니다.';
   function editDirty() { return editing && $('editBox').value !== editBody; }
   function confirmLeaveEdit() {
     if (!editDirty()) return true;
@@ -869,6 +873,7 @@
     if (!editing) return;
     editing = false;
     editEp = null;
+    editArc = null;
     document.body.classList.remove('editing');
     $('editor').hidden = true;
     resetEditChrome();
@@ -878,7 +883,15 @@
     editPreviewOn = !!on;
     if (editPreviewOn) {
       var raw = $('editBox').value || '';
-      $('editPreview').innerHTML = raw.trim() ? DOMPurify.sanitize(marked.parse(raw)) : '<p class="editnote">(빈 본문)</p>';
+      if (editArc && editArc.kind !== 'md') {
+        var pre = document.createElement('pre');
+        pre.className = 'plain';
+        pre.textContent = raw.length ? raw : '(빈 파일)';
+        $('editPreview').innerHTML = '';
+        $('editPreview').appendChild(pre);
+      } else {
+        $('editPreview').innerHTML = raw.trim() ? DOMPurify.sanitize(marked.parse(raw)) : '<p class="editnote">(빈 본문)</p>';
+      }
       $('editPreview').hidden = false;
       $('editBox').hidden = true;
       $('editPreviewBtn').textContent = '다시 고치기';
@@ -902,17 +915,21 @@
     });
   }
   function startEdit() {
-    if (editing || arcOpen || arcListing || pos < 0) return;
+    if (editing || arcListing) return;
+    if (arcOpen) { startArchiveEdit(); return; }
+    if (pos < 0) return;
     var ep = episodes[seq[pos]];
     if (!ep) return;
     flushFeedback();
     hideQuoteBar();
     var openBox = function (text) {
       if (pos < 0 || !episodes[seq[pos]] || episodes[seq[pos]].id !== ep.id) return;
-      var parts = Core.splitEditable(text);
+      editArc = null;
       editEp = ep;
+      var parts = Core.splitEditable(text);
       editBody = parts.body;
       resetEditChrome();
+      $('editNote').textContent = EP_EDIT_NOTE;
       $('editBox').value = parts.body;
       $('editStatus').textContent = (ep.ids && ep.ids.length > 1) ? '같은 글의 사본도 함께 고칩니다.' : '';
       editing = true;
@@ -928,7 +945,9 @@
     else loadContent(ep).then(openBox, function (e) { toast('본문을 불러오지 못했어요. ' + errMsg(e)); });
   }
   function saveEdit() {
-    if (!editing || !editEp || $('editSave').disabled) return;
+    if (!editing || $('editSave').disabled) return;
+    if (editArc) { saveArchiveEdit(); return; }
+    if (!editEp) return;
     var ep = editEp, body = $('editBox').value, previous = editBody;
     if (body === previous) { closeEdit(); return; }
     if (!editSeen) {
@@ -971,6 +990,51 @@
     applyLayout();
   };
   $('editSave').onclick = saveEdit;
+
+  function finishArchiveSave(rec, previous, body, res) {
+    if (res.changed) idb.put('undo:' + rec.id, { body: previous, at: Date.now() });
+    var f = arc.i >= 0 ? arc.list[arc.i] : null;
+    if (f && f.id === rec.id) {
+      if (res.modified) f.modifiedTime = res.modified;
+      try { f.size = new TextEncoder().encode(body).length; } catch (e2) {}
+    }
+    var i = arc.i;
+    closeEdit();
+    toast('설정 파일을 저장했어요');
+    if (i >= 0) openArcFile(i, false);
+  }
+  function saveArchiveEdit() {
+    var rec = editArc;
+    var body = $('editBox').value;
+    var previous = editBody;
+    if (!rec) return;
+    if (body === previous) { closeEdit(); return; }
+    if (!editSeen) {
+      showEditPreview(true);
+      $('editStatus').textContent = '이렇게 보입니다. 맞으면 이대로 저장을 누르세요.';
+      return;
+    }
+    $('editSave').disabled = true;
+    $('editStatus').textContent = '저장 중…';
+    var send = function (force) {
+      return Core.saveArchiveText({ id: rec.id, name: rec.name, mimeType: rec.mime, modified: force ? '' : rec.modified }, body);
+    };
+    var failed = function (e) {
+      $('editSave').disabled = false;
+      $('editStatus').textContent = '저장 실패: ' + errMsg(e);
+    };
+    send(false).then(function (res) { finishArchiveSave(rec, previous, body, res); }, function (e) {
+      if (!(e && e.conflict)) { failed(e); return; }
+      $('editSave').disabled = false;
+      if (!window.confirm('다른 곳에서 이 파일을 먼저 고쳤습니다. 지금 내용으로 덮어쓸까요?')) {
+        $('editStatus').textContent = '저장하지 않았어요. 다른 곳의 수정이 남아 있습니다.';
+        return;
+      }
+      $('editSave').disabled = true;
+      $('editStatus').textContent = '저장 중…';
+      send(true).then(function (res) { finishArchiveSave(rec, previous, body, res); }, failed);
+    });
+  }
 
   // ---------- 쪽 넘기기 ----------
   // page = 지금 보이는 화면(양쪽 보기면 두 쪽 묶음)의 번호, pageCount = 화면 수, cols = 전체 쪽 수
@@ -1693,8 +1757,10 @@
 
   window.addEventListener('popstate', function (e) {
     if (editing && !confirmLeaveEdit()) {
-      var stay = editEp;
-      if (stay) history.pushState({ view: 'ep', id: stay.id, cat: seqCat }, '', epUrl(stay));
+      if (editArc && arc.stack.length && arc.i >= 0 && arc.list[arc.i]) {
+        var curA = arc.stack[arc.stack.length - 1];
+        history.pushState({ view: 'arcfile', stack: arc.stack, fid: editArc.id }, '', homeUrl() + '?arc=' + encodeURIComponent(curA.id) + '&f=' + encodeURIComponent(editArc.id));
+      } else if (editEp) history.pushState({ view: 'ep', id: editEp.id, cat: seqCat }, '', epUrl(editEp));
       return;
     }
     closeEdit();
@@ -1706,12 +1772,13 @@
   });
 
 
-  // ---------- 보관 폴더 (목록에서 빠진 폴더를 읽기 전용으로 둘러보기) ----------
-  // 드라이브에는 목록 조회·내려받기(GET)만 한다. 피드백·소설 아님·읽은 위치 기록 없음.
+  // ---------- 보관 폴더 ----------
+  // 피드백·읽은 위치는 남기지 않는다. 00_GROK_시작과 설정과 대화의 마크다운·텍스트만 같은 파일에 저장한다.
   var arc = { stack: [], files: [], list: [], i: -1 };
   var arcOpen = false;        // 보관 폴더의 파일을 읽는 중
   var arcListing = false;     // 보관 폴더 목록을 보는 중
   var arcForceScroll = false; // 아주 큰 파일은 쪽 넘기기 대신 스크롤
+  var arcEditLoading = false;
   var arcMem = {};            // 폴더 ID -> {at, files} (이번 실행 동안)
   var arcScroll = {};         // 폴더 ID -> 목록 스크롤 위치
   var ARC_BIG = 3 * 1024 * 1024;
@@ -1817,6 +1884,8 @@
     });
   }
   function showArchive(stack, push) {
+    if (editing && !confirmLeaveEdit()) return;
+    closeEdit();
     flushFeedback();
     flushState(false);   // 앞서 읽던 화의 기록은 들어가기 전에 마무리
     if (arcListing && arc.stack.length) arcScroll[arc.stack[arc.stack.length - 1].id] = window.scrollY;
@@ -1836,6 +1905,7 @@
     $('backBtn').style.display = 'inline-block';
     $('headTitle').textContent = arcHeader(arc.stack);
     crumbs(arc.stack);
+    $('arcNote').textContent = archiveCanEdit(arc.stack) ? '피드백이나 읽은 위치는 남기지 않아요. 마크다운과 텍스트 설정 파일은 열어서 고칠 수 있어요.' : '읽기 전용이에요. 피드백이나 읽은 위치를 남기지 않아요.';
     if (push) history.pushState({ view: 'arc', stack: arc.stack }, '', homeUrl() + '?arc=' + encodeURIComponent(cur.id));
     $('arcList').innerHTML = ''; $('arcCount').textContent = '';
     $('arcStatus').style.display = 'block'; $('arcStatus').textContent = '폴더를 불러오는 중이에요…';
@@ -1910,8 +1980,52 @@
     box.appendChild(a);
     return box;
   }
+  function archiveRoot(stack) {
+    var s = stack || arc.stack;
+    if (!s.length) return null;
+    for (var i = 0; i < archiveRoots.length; i++) if (archiveRoots[i].id === s[0].id) return archiveRoots[i];
+    return null;
+  }
+  function archiveCanEdit(stack) {
+    var root = archiveRoot(stack);
+    return !!(root && (root.kind === 'settings' || root.name === '00_GROK_시작'));
+  }
+  function frozenSettingsName(name) {
+    return /백업|보강전|자국문장전|이전라이브|압축전|버전규칙전|버전줄전/.test(name || '');
+  }
+  function settingsEditable(f) {
+    if (!f || !archiveCanEdit() || frozenSettingsName(f.name)) return false;
+    var k = arcKind(f);
+    return k === 'md' || k === 'txt';
+  }
+  function startArchiveEdit() {
+    var f = arcOpen && arc.i >= 0 ? arc.list[arc.i] : null;
+    if (!settingsEditable(f) || arcEditLoading) return;
+    hideQuoteBar();
+    arcEditLoading = true;
+    Core.peekArchive(f).then(function (got) {
+      arcEditLoading = false;
+      if (!arcOpen || !arc.list[arc.i] || arc.list[arc.i].id !== f.id || editing) return;
+      editEp = null;
+      editArc = { id: f.id, name: f.name, mime: got.mime, modified: got.modified, kind: arcKind(f) };
+      editBody = got.text;
+      resetEditChrome();
+      $('editNote').textContent = ARC_EDIT_NOTE;
+      $('editBox').value = got.text;
+      $('editStatus').textContent = f.name;
+      editing = true;
+      $('editor').hidden = false;
+      document.body.classList.add('editing');
+      applyLayout();
+      window.scrollTo(0, 0);
+      $('editBox').focus();
+      loadEditUndo({ id: f.id });
+    }, function (e) { arcEditLoading = false; toast('파일을 불러오지 못했어요. ' + errMsg(e)); });
+  }
   function openArcFile(i, push, p) {
     if (i < 0 || i >= arc.list.length) return;
+    if (editing && !confirmLeaveEdit()) return;
+    closeEdit();
     p = p || {};
     var f = arc.list[i], cur = arc.stack[arc.stack.length - 1];
     if (arcListing) arcScroll[cur.id] = window.scrollY;
@@ -1922,8 +2036,11 @@
     $('reader').style.display = 'block';
     $('backBtn').style.display = 'inline-block';
     $('fb').style.display = 'none';
-    $('editBtn').hidden = true;
-    $('pbEdit').hidden = true;
+    var canEdit = settingsEditable(f);
+    $('editBtn').hidden = !canEdit;
+    $('pbEdit').hidden = !canEdit;
+    $('editBtn').textContent = canEdit ? '고치기' : '교정';
+    $('pbEdit').textContent = canEdit ? '고치기' : '교정';
     $('pbEnd').hidden = true;
     document.body.classList.add('arcfile');
     setNavText(NAV_ARC);

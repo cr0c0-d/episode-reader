@@ -904,7 +904,7 @@
     return s.length > 3 ? s : ('00' + s).slice(-3);
   }
 
-  // ---------- 보관 폴더 (읽기 전용: 목록·내려받기만, 쓰기 없음) ----------
+  // ---------- 보관 폴더 (설정집 마크다운·텍스트만 같은 파일에 저장) ----------
   var ARCHIVE_FIELDS = 'id, name, mimeType, modifiedTime, size';
   function listArchiveFolder(id) {
     return D.list("'" + esc(id) + "' in parents and trashed = false", ARCHIVE_FIELDS).then(function (files) {
@@ -921,6 +921,40 @@
     if (file.mimeType === 'application/vnd.google-apps.document') return D.exportText(file.id, 'text/plain');
     return D.download(file.id);
   }
+  function archiveTextMime_(file, metaMime) {
+    var mt = metaMime || (file && file.mimeType) || '';
+    if (/^text\//.test(mt)) return mt;
+    var n = String((file && file.name) || '').toLowerCase();
+    if (/\.(md|markdown)$/.test(n)) return 'text/markdown';
+    return 'text/plain';
+  }
+  /** 고치기 직전에 최신 본문과 수정 시각을 함께 받는다. */
+  function peekArchive(file) {
+    return D.getMeta(file.id, 'id,name,mimeType,modifiedTime').then(function (meta) {
+      return getArchiveContent(file).then(function (text) {
+        return { text: text, modified: (meta && meta.modifiedTime) || '', mime: archiveTextMime_(file, meta && meta.mimeType) };
+      });
+    });
+  }
+  /**
+   * 설정 파일 내용만 같은 ID로 덮어쓴다. 새 파일을 만들지 않는다.
+   * file.modified가 있고 그 사이 드라이브에서 바뀌었으면 conflict로 거절한다.
+   */
+  function saveArchiveText(file, text) {
+    return withLock_(function () {
+      return D.getMeta(file.id, 'id,name,mimeType,modifiedTime').then(function (meta) {
+        if (file.modified && meta.modifiedTime && meta.modifiedTime !== file.modified) {
+          var err = new Error('다른 곳에서 먼저 수정됨');
+          err.conflict = true;
+          throw err;
+        }
+        var mime = archiveTextMime_(file, meta && meta.mimeType);
+        return D.update(file.id, text, mime).then(function (r) {
+          return { changed: true, modified: (r && r.modifiedTime) || '' };
+        });
+      });
+    });
+  }
 
   function cleanTitle_(raw) {
     var t = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
@@ -936,7 +970,7 @@
     BLOCK_START: BLOCK_START, BLOCK_END: BLOCK_END, ROOT_FOLDER_ID: ROOT_FOLDER_ID,
     getEpisodes: getEpisodes, getEpisodeContent: getEpisodeContent, saveEpisodeBody: saveEpisodeBody,
     splitEditable: splitEditable_, joinEditable: joinEditable_,
-    listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent,
+    listArchiveFolder: listArchiveFolder, getArchiveContent: getArchiveContent, peekArchive: peekArchive, saveArchiveText: saveArchiveText,
     SOURCE_LABEL: SOURCE_LABEL, baseName: baseName_, fbKey: fbKey_, retiredSource: isRetiredSource_,
     saveFeedback: saveFeedback, saveKinds: saveKinds, saveLastRead: saveLastRead, getLastRead: getLastRead,
     noteEpisodeText: noteEpisodeText, dropEpisodeText: dropEpisodeText,
