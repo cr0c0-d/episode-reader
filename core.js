@@ -727,7 +727,8 @@
   }
   function markLabel_(ms) { return ms == null ? '없음' : stamp_(new Date(ms)); }
   /**
-   * 미반영 피드백. 각 편은 그 작가의 마지막 반영완료와 '작가: 전체' 기준 중 더 늦은 시각 이후(같은 분 포함)만 넣는다.
+   * 미반영 피드백. ChatGPT·Grok만 넣는다. 기존(~685) 편은 리더와 원본 하단·전체 모음에만 남긴다.
+   * 넣는 편은 그 작가의 마지막 반영완료와 '작가: 전체' 기준 중 더 늦은 시각 이후(같은 분 포함)만.
    * 한 작가의 반영완료가 다른 작가 편을 지우지 않는다. 기록 시각이 없는 항목은 반영 기록이 하나도 없을 때만 넣는다.
    */
   function buildUnapplied_(idx, logText) {
@@ -737,6 +738,8 @@
     var items = Object.keys(idx.items).filter(function (k) {
       return !isRetiredSource_(k) && !isRetiredSource_(idx.items[k] && idx.items[k].src);
     }).map(function (k) { return idx.items[k]; }).filter(function (x) {
+      var src = srcKey_(x.src);
+      if (src !== 'gpt' && src !== 'grok') return false;
       if (x.kind === 'notnovel' || !(x.rating || x.good || x.bad)) return false;
       var cut = cutoffFor_(x.src, marks);
       var t = kstMs_(x.updated);
@@ -748,8 +751,9 @@
       '',
       '> 에피소드 리더 앱이 자동으로 만드는 파일이다. 직접 수정하지 말 것(피드백을 저장할 때마다 덮어써짐).',
       '> 마지막 갱신: ' + stamp_() + ' · 미반영 피드백 ' + items.length + '편',
-      '> 기준: 전체 ' + markLabel_(marks.all) + ' · ChatGPT ' + markLabel_(marks.gpt) + ' · Grok ' + markLabel_(marks.grok) + ' · 기존 ' + markLabel_(marks.old),
+      '> 기준: 전체 ' + markLabel_(marks.all) + ' · ChatGPT ' + markLabel_(marks.gpt) + ' · Grok ' + markLabel_(marks.grok),
       '> 각 편은 그 작가의 마지막 반영완료와 전체 기준 중 더 늦은 시각 이후(같은 분 포함)만 남긴다.',
+      '> 기존(~685) 편은 이 파일에 넣지 않는다. 리더 앱과 각 에피소드 하단에서만 본다.',
       '',
       '## 생성 에이전트 사용 방법',
       '',
@@ -770,7 +774,7 @@
       if (buckets[k]) buckets[k].push(x);
       else buckets.other.push(x);
     });
-    [['gpt', 'ChatGPT'], ['grok', 'Grok'], ['old', '기존'], ['other', '기타']].forEach(function (g) {
+    [['gpt', 'ChatGPT'], ['grok', 'Grok']].forEach(function (g) {
       var list = buckets[g[0]];
       if (!list.length) return;
       out.push('## ' + g[1] + ' (' + list.length + '편)', '');
@@ -824,7 +828,14 @@
    * 목록 표시는 기다리지 않고, 실패해도 다음 저장 때 다시 쓴다.
    */
   var HEAL_LS = 'reader.unappliedHeal';
+  var UNAPPLIED_RULE = '2026-10-31-no-old';
   var healing = null;
+  function rulePending_() {
+    try { return global.localStorage.getItem('reader.unappliedRule') !== UNAPPLIED_RULE; } catch (e) { return true; }
+  }
+  function markRule_() {
+    try { global.localStorage.setItem('reader.unappliedRule', UNAPPLIED_RULE); } catch (e) {}
+  }
   function healSig_(fi, uf, logFile) {
     return [(fi && fi.modifiedTime) || '', (uf && uf.modifiedTime) || '', (logFile && logFile.modifiedTime) || ''].join('|');
   }
@@ -835,6 +846,7 @@
     try { global.localStorage.setItem(HEAL_LS, sig); } catch (e) {}
   }
   function shouldHeal_(fi, uf, logFile) {
+    if (rulePending_()) return true;
     if (!uf || !uf.modifiedTime) return true;
     var ufMs = Date.parse(uf.modifiedTime) || 0;
     var idxMs = fi && fi.modifiedTime ? (Date.parse(fi.modifiedTime) || 0) : 0;
@@ -848,7 +860,7 @@
     var logFile = firstByName(files, APPLIED_LOG_NAME);
     if (!shouldHeal_(fi, uf, logFile)) return;
     var sig = healSig_(fi, uf, logFile);
-    if (uf && healSeen_(sig)) return;
+    if (uf && healSeen_(sig) && !rulePending_()) return;
     healing = withLock_(function () {
       return readIndex_().then(function (idx) {
         return readAppliedLog_().then(function (log) {
@@ -858,17 +870,18 @@
             if (f) { unappliedFile = f; fileMemo[UNAPPLIED_NAME] = f; }
             return f;
           }
-          if (!uf) return writeGenerated_(UNAPPLIED_NAME, text).then(wrote);
+          if (!uf) return writeGenerated_(UNAPPLIED_NAME, text).then(function (f) { markRule_(); return wrote(f); });
           return D.download(uf.id).then(function (old) {
             if (stampless_(old) === norm) {
               lastNorm[UNAPPLIED_NAME] = norm;
               unappliedFile = uf;
               fileMemo[UNAPPLIED_NAME] = uf;
               healMark_(sig);
+              markRule_();
               return uf;
             }
-            return writeGenerated_(UNAPPLIED_NAME, text).then(wrote);
-          }, function () { return writeGenerated_(UNAPPLIED_NAME, text).then(wrote); });
+            return writeGenerated_(UNAPPLIED_NAME, text).then(function (f) { markRule_(); return wrote(f); });
+          }, function () { return writeGenerated_(UNAPPLIED_NAME, text).then(function (f) { markRule_(); return wrote(f); }); });
         });
       });
     }).then(function () { if (api.onUnappliedHealed) try { api.onUnappliedHealed(); } catch (e) {} }, function (e) {
